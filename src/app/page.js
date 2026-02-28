@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { auth, googleProvider, db } from "@/lib/firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import { collection, addDoc, query, where, getDocs, orderBy, deleteDoc, doc } from "firebase/firestore";
+// ДОДАЄМО БІБЛІОТЕКУ ДЛЯ КРАСИВИХ ПОВІДОМЛЕНЬ
+import { Toaster, toast } from "react-hot-toast";
 
 export default function Home() {
   const [mood, setMood] = useState("");
@@ -22,22 +24,35 @@ export default function Home() {
   }, []);
 
   const handleLogin = async () => {
-    try { await signInWithPopup(auth, googleProvider); } 
-    catch (error) { console.error(error); }
-  };
-
-  const handleLogout = () => signOut(auth);
-
-  // Функція для обробки натискання клавіш
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault(); // Запобігаємо переносу рядка
-      generateAnime();    // Запускаємо пошук
+    try { 
+      await signInWithPopup(auth, googleProvider); 
+      toast.success("Вхід успішний!");
+    } 
+    catch (error) { 
+      console.error(error); 
+      toast.error("Помилка входу");
     }
   };
 
-const generateAnime = async () => {
-    if (!mood.trim()) return alert("Опиши свій настрій!");
+  const handleLogout = () => {
+    signOut(auth);
+    toast("Ви вийшли з акаунта", { icon: "👋" });
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      generateAnime();
+    }
+  };
+
+  const generateAnime = async () => {
+    if (!mood.trim()) {
+      toast.error("Спочатку опиши свій настрій!");
+      return;
+    }
+    if (isLoading) return;
+    
     setIsLoading(true);
     setResult("");
     setAnimeDetails(null);
@@ -60,13 +75,12 @@ const generateAnime = async () => {
         setResult(fullText);
       }
 
-      // Розділяємо текст. Тепер title буде англійською.
-      const parts = fullText.split("|");
-      if (parts.length >= 2) {
-        const titleEng = parts[0].trim();
-        await fetchAnimeCover(titleEng);
-      }
-    } catch (error) { console.error(error); } 
+      const [title] = fullText.split("|");
+      if (title) await fetchAnimeCover(title.trim());
+    } catch (error) { 
+      console.error(error); 
+      toast.error("Сталася помилка при генерації");
+    } 
     finally { setIsLoading(false); }
   };
 
@@ -87,13 +101,18 @@ const generateAnime = async () => {
   };
 
   const saveToFavorites = async () => {
-    if (!user || !animeDetails) return;
+    if (!user) {
+      toast.error("Спочатку увійди в акаунт!");
+      return;
+    }
+    if (!animeDetails) return;
+    
     try {
       const q = query(collection(db, "favorites"), where("userId", "==", user.uid), where("title", "==", animeDetails.title));
       const querySnapshot = await getDocs(q);
       
       if (!querySnapshot.empty) {
-        alert("Це аніме вже є у твоїй колекції! 😉");
+        toast("Це аніме вже є у твоїй колекції!", { icon: "😉" });
         return;
       }
 
@@ -104,9 +123,12 @@ const generateAnime = async () => {
         url: animeDetails.url,
         timestamp: new Date()
       });
-      alert("Збережено в обране! ⭐");
+      toast.success("Збережено в обране!"); // ЗАМІНИЛИ ALERT НА TOAST
       fetchFavorites(user.uid);
-    } catch (error) { console.error(error); }
+    } catch (error) { 
+      console.error(error); 
+      toast.error("Помилка збереження");
+    }
   };
 
   const fetchFavorites = async (uid) => {
@@ -122,10 +144,23 @@ const generateAnime = async () => {
     if (!confirm("Видалити з колекції?")) return;
     await deleteDoc(doc(db, "favorites", id));
     setFavorites(favorites.filter(f => f.id !== id));
+    toast.success("Видалено з колекції");
   };
 
   return (
     <main className="min-h-screen bg-[#0f172a] text-white p-4 sm:p-8 font-sans">
+      {/* ДОДАЄМО КОМПОНЕНТ TOASTER ДЛЯ ВІДОБРАЖЕННЯ ПОВІДОМЛЕНЬ */}
+      <Toaster 
+        position="bottom-right" 
+        toastOptions={{
+          style: {
+            background: '#1e293b',
+            color: '#fff',
+            border: '1px solid #334155',
+          },
+        }} 
+      />
+
       {/* Header */}
       <div className="max-w-5xl mx-auto flex justify-between items-center mb-12">
         <div className="text-3xl font-black bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">AniMood AI ⛩️</div>
@@ -147,7 +182,7 @@ const generateAnime = async () => {
           placeholder="Який настрій сьогодні? (Enter для пошуку)"
           value={mood}
           onChange={(e) => setMood(e.target.value)}
-          onKeyDown={handleKeyDown} // ДОДАНО ОБРОБКУ ENTER
+          onKeyDown={handleKeyDown}
         />
         <button 
           onClick={generateAnime} 
