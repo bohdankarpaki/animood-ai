@@ -97,13 +97,23 @@ export default function Home() {
     setResult("");
     setAnimeDetails(null);
 
-    try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // ВІДПРАВЛЯЄМО ІСТОРІЮ НА БЕКЕНД
-        body: JSON.stringify({ mood, viewedAnime }),
+   try {
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mood, viewedAnime, userId: user?.uid }), // Передаємо ID
+    });
+
+    if (response.status === 403) {
+      const errorData = await response.json();
+      toast.error(errorData.message, {
+        duration: 6000,
+        icon: "💳",
+        style: { background: "#3b0764", color: "#fff", border: "1px solid #a855f7" }
       });
+      // Тут можна відкрити модальне вікно з цінами
+      return;
+    }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
