@@ -1,104 +1,93 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { db } from "@/lib/firebase"; 
-import { doc, getDoc, setDoc, updateDoc, increment } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, increment, collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ПРІОРИТЕТ МОДЕЛЕЙ (від найновіших до найстабільніших)
+// Використовуємо моделі з Unlimited лімітами для стабільності
 const MODELS_PRIORITY = [
-  "gemini-2.5-flash-lite", // Безлімітна новинка
-  "gemini-2.0-flash",      // Надійний сучасний стандарт
-  "gemini-2.0-flash-lite" // Максимальна швидкість
+ "gemini-2.0-flash-lite",      
+  
+  "gemini-2.5-flash-lite", 
+  "gemini-2.0-flash",
 ];
 
 export async function POST(req) {
   try {
     const { mood, viewedAnime, userId } = await req.json();
     
-    // 1. ВИЗНАЧЕННЯ ІДЕНТИФІКАТОРА ТА ЛІМІТІВ
-    // Для незареєстрованих використовуємо IP, для своїх — UID
-    const ip = req.headers.get("x-forwarded-for")?.split(',')[0] || "anonymous";
-    const identifier = userId || ip;
-    const limit = userId ? 15 : 3; // Твої умови: 15 для своїх, 3 для гостей
+    // Перевірка userId (ігноруємо рядок "null")
+    const validUserId = userId && userId !== "null" ? userId : null;
     
-    const today = new Date().toISOString().split('T')[0]; // Формат YYYY-MM-DD
+    const ip = req.headers.get("x-forwarded-for")?.split(',')[0] || "anonymous";
+    const identifier = validUserId || ip;
+    const limit = validUserId ? 15 : 3;
+    
+    const today = new Date().toISOString().split('T')[0];
     const usageRef = doc(db, "usage", identifier);
     
-    // 2. ПЕРЕВІРКА КВОТИ У FIRESTORE
+    // ПЕРЕВІРКА ЛІМІТІВ
     const usageSnap = await getDoc(usageRef);
-    let currentCount = 0;
-
-    if (usageSnap.exists()) {
-      const data = usageSnap.data();
-      if (data.lastDate === today) {
-        currentCount = data.count || 0;
-      } else {
-        // Новий день — скидаємо лічильник (merge: true збереже інші дані)
-        await setDoc(usageRef, { count: 0, lastDate: today }, { merge: true });
-      }
-    } else {
-      // Перший візит за весь час
-      await setDoc(usageRef, { count: 0, lastDate: today });
+    if (usageSnap.exists() && usageSnap.data().lastDate === today && usageSnap.data().count >= limit) {
+      return new Response(JSON.stringify({ error: "LIMIT_REACHED" }), { status: 403 });
     }
 
-    if (currentCount >= limit) {
-      return new Response(JSON.stringify({ 
-        error: "LIMIT_REACHED", 
-        message: `Ви вичерпали ліміт на сьогодні (${limit} зап.). ${!userId ? 'Увійдіть, щоб отримати 15 запитів!' : 'Приходьте завтра за новими ідеями!'}` 
-      }), { status: 403, headers: { "Content-Type": "application/json" } });
-    }
-
-    // 3. ЦИКЛ ГЕНЕРАЦІЇ (FALLBACK STRATEGY)
     let result = null;
-    let usedModelName = "";
-
     for (const modelName of MODELS_PRIORITY) {
       try {
         const model = genAI.getGenerativeModel({ model: modelName });
+        const prompt = `Ти — аніме-сомельє. Настрій: "${mood}". Підбери 1 аніме.
+        ФОРМАТ ВІДПОВІДІ: Назва Eng | Опис | Назва Укр. 
+        ВАЖЛИВО: Тільки текст, розділений "|". Без лапок та зірочок.`;
         
-        const avoidList = viewedAnime?.length > 0 ? viewedAnime.join(", ") : "";
-        const avoidRule = avoidList ? `ВАЖЛИВО: Користувач вже бачив: ${avoidList}. ЗАБОРОНЕНО повторювати ці назви. Запропонуй нове аніме!` : "";
-
-        const prompt = `Ти — елітний сомельє аніме. Користувач має настрій: "${mood}". 
-        Підбери ОДНЕ ідеальне аніме.
-        ${avoidRule}
-        Опис має бути атмосферним, без спойлерів, 2-3 речення.
-        Формат: Назва англійською | Опис українською | Назва українською.
-        Не пиши нічого зайвого, тільки цей формат.`;
-
         result = await model.generateContentStream(prompt);
-        usedModelName = modelName;
         if (result) break; 
-      } catch (err) {
-        if (err.status === 429) {
-          console.warn(`⚠️ ${modelName} Quota exceeded. Trying next...`);
-          continue;
-        }
-        throw err;
-      }
+      } catch (err) { continue; }
     }
 
-    if (!result) throw new Error("Усі моделі недоступні.");
+    if (!result) throw new Error("API Unavailable");
 
-    // 4. ОНОВЛЕННЯ ЛІЧИЛЬНИКА ТА ПОВЕРНЕННЯ СТРІМУ
-    await updateDoc(usageRef, { count: increment(1) });
-    console.log(`✅ [${identifier}] використано модель: ${usedModelName}`);
+    // Оновлюємо лічильник запитів
+    await setDoc(usageRef, { count: increment(1), lastDate: today }, { merge: true });
 
     const stream = new ReadableStream({
       async start(controller) {
+        let fullText = ""; 
+
         for await (const chunk of result.stream) {
-          controller.enqueue(new TextEncoder().encode(chunk.text()));
+          const chunkText = chunk.text();
+          fullText += chunkText;
+          controller.enqueue(new TextEncoder().encode(chunkText));
+        }
+
+        // ЗАПИС В ІСТОРІЮ ПІСЛЯ ЗАВЕРШЕННЯ ГЕНЕРАЦІЇ
+        if (validUserId && fullText.includes("|")) {
+          try {
+            const parts = fullText.replace(/\*\*|"/g, "").split("|").map(p => p.trim());
+            
+            // Записуємо тільки якщо розбиття пройшло успішно
+            if (parts.length >= 2) {
+              await addDoc(collection(db, "history"), {
+                userId: validUserId,
+                mood: mood,
+                animeTitle: parts[0],
+                animeTitleUa: parts[2] || parts[0],
+                timestamp: serverTimestamp()
+              });
+              console.log("✅ Історію збережено для:", validUserId);
+            }
+          } catch (e) {
+            console.error("❌ Помилка Firebase History:", e.message);
+          }
         }
         controller.close();
       },
     });
 
-    return new Response(stream, { 
-      headers: { "Content-Type": "text/plain; charset=utf-8" } 
-    });
+    return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 
   } catch (error) {
-    console.error("Critical API Error:", error);
-    return new Response("Вибачте, сервіс тимчасово перевантажений.", { status: 500 });
+    console.error("API Error:", error);
+    return new Response("Error", { status: 500 });
   }
 }

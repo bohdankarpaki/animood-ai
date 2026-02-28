@@ -15,10 +15,12 @@ export default function Home() {
   const [favorites, setFavorites] = useState([]);
   const [viewedAnime, setViewedAnime] = useState([]);
   
-  // СТАН ДЛЯ ЛІМІТІВ
+  // СТАН ДЛЯ ЛІМІТІВ ТА ІСТОРІЇ
   const [usage, setUsage] = useState({ count: 0, limit: 3 });
+  const [history, setHistory] = useState([]);
+  const [activeTab, setActiveTab] = useState("favorites"); // "favorites" або "history"
 
-  // ФУНКЦІЯ ОНОВЛЕННЯ ЛІМІТІВ
+  // ОНОВЛЕННЯ ЛІМІТІВ
   const refreshUsage = async () => {
     try {
       const res = await fetch(`/api/usage?userId=${user?.uid || null}`);
@@ -31,34 +33,38 @@ export default function Home() {
     }
   };
 
-  // Оновлюємо ліміти при зміні користувача
-  useEffect(() => {
-    refreshUsage();
-  }, [user]);
+  // ЗАВАНТАЖЕННЯ ІСТОРІЇ
+  const fetchHistory = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/history?userId=${user.uid}`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data);
+      }
+    } catch (err) {
+      console.error("Помилка завантаження історії", err);
+    }
+  };
 
-  // СЛОВНИК ФЕЙСКОНТРОЛЮ
-  const badWords = [
-    "бля", "бляд", "блять", "вибляд", "хуй", "хує", "хуя", "хуї", "поху", "наху", "оху", "хєр", "хер", "хрєн", "залуп",
-    "пізд", "пизд", "пізде", "пизде", "єбат", "ебат", "їбат", "йоб", "єбн", "ебн", "уйо", "уєб", "виєб", "в'єб", "заєб",
-    "срак", "срал", "дуп", "гузн", "гівн", "говно", "гавн", "лайн", "кізяк", "сцяк", "перд", "бзд", "бздюх", "дрис",
-    "шмарк", "курв", "лярв", "хвойд", "шльонд", "шлюх", "лахудр", "шалав", "бовдур", "бевзь", "телеп", "дурбел", "вайл",
-    "вилуп", "вишкреб", "наволоч", "падл", "покидь", "мерзот", "набрід", "чмо", "мудак", "бидл", "рагуль", "шляк", "грець", "трясц", "холер", "дідьк"
-  ];
-
+  // ПІДПИСКА НА СТАН КОРИСТУВАЧА
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      if (currentUser) fetchFavorites(currentUser.uid);
+      if (currentUser) {
+        fetchFavorites(currentUser.uid);
+        fetchHistory();
+      }
+      refreshUsage();
     });
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   const handleLogin = async () => {
     try { 
       await signInWithPopup(auth, googleProvider); 
       toast.success("Вхід успішний! ✨");
-    } 
-    catch (error) { 
+    } catch (error) { 
       console.error(error); 
       toast.error("Помилка входу");
     }
@@ -66,6 +72,7 @@ export default function Home() {
 
   const handleLogout = () => {
     signOut(auth);
+    setHistory([]);
     toast("Ви вийшли з акаунта", { icon: "👋" });
   };
 
@@ -78,19 +85,6 @@ export default function Home() {
 
   const generateAnime = async () => {
     if (!mood.trim()) return toast.error("Спочатку опиши свій настрій!");
-    
-    const lowerMood = mood.toLowerCase();
-    const isProfane = badWords.some(word => lowerMood.includes(word));
-
-    if (isProfane) {
-      toast.error("🤬 Правила клубу порушено! Доступ закрито.", { duration: 4000 });
-      setTimeout(() => {
-        if (user) signOut(auth);
-        window.location.href = "https://google.com";
-      }, 1500);
-      return;
-    }
-
     if (isLoading) return;
     
     setIsLoading(true);
@@ -101,7 +95,8 @@ export default function Home() {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mood, viewedAnime, userId: user?.uid }),
+        // Перевір цей рядок у fetch всередині generateAnime:
+body: JSON.stringify({ mood, viewedAnime, userId: user?.uid || null }),
       });
 
       if (response.status === 403) {
@@ -125,17 +120,17 @@ export default function Home() {
         fullText += decoder.decode(value, { stream: true });
         setResult(fullText);
       }
+const fullTextCleaned = fullText.replace(/\*\*|"|'|Назва:|Title:/g, ""); // Видаляємо сміття
+const parts = fullTextCleaned.split("|").map(p => p.trim());
+const titleEng = parts[0];
+const titleUa = parts[2] || titleEng;
 
-      const parts = fullText.split("|");
-      const titleEng = parts[0]?.trim();
-      const titleUa = parts[2]?.trim() || titleEng;
-
-      if (titleEng) {
-        setViewedAnime(prev => [...prev, titleEng].slice(-5));
-        await fetchAnimeCover(titleEng, titleUa);
-        // ОНОВЛЮЄМО ЛІМІТ ПІСЛЯ УСПІШНОЇ ГЕНЕРАЦІЇ
-        refreshUsage();
-      }
+if (titleEng) {
+  setViewedAnime(prev => [...prev, titleEng].slice(-5));
+  await fetchAnimeCover(titleEng, titleUa);
+  refreshUsage();
+  fetchHistory();
+}
     } catch (error) { 
       console.error(error); 
       toast.error("Сталася помилка при генерації");
@@ -143,20 +138,35 @@ export default function Home() {
     finally { setIsLoading(false); }
   };
 
-  const fetchAnimeCover = async (title, titleUa) => {
+ const fetchAnimeCover = async (title, titleUa) => {
+  try {
+    const res = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`);
+    const data = await res.json();
+    
+    if (data.data?.[0]) {
+      const a = data.data[0];
+      setAnimeDetails({
+        title: a.title,
+        titleUa: titleUa,
+        image: a.images.jpg.large_image_url,
+        score: a.score || "N/A",
+        url: a.url
+      });
+    } else {
+      // Якщо Jikan не знайшов аніме, все одно показуємо назву без картинки
+      setAnimeDetails({ title: title, titleUa: titleUa, image: null, score: "N/A", url: "#" });
+    }
+  } catch (error) {
+    console.error("Помилка Jikan:", error);
+    setAnimeDetails({ title: title, titleUa: titleUa, image: null, score: "N/A", url: "#" });
+  }
+};
+
+  const fetchFavorites = async (uid) => {
     try {
-      const res = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`);
-      const data = await res.json();
-      if (data.data?.[0]) {
-        const anime = data.data[0];
-        setAnimeDetails({
-          title: anime.title,
-          titleUa: titleUa,
-          image: anime.images.jpg.large_image_url,
-          score: anime.score,
-          url: anime.url
-        });
-      }
+      const q = query(collection(db, "favorites"), where("userId", "==", uid), orderBy("timestamp", "desc"));
+      const querySnapshot = await getDocs(q);
+      setFavorites(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     } catch (error) { console.error(error); }
   };
 
@@ -169,23 +179,12 @@ export default function Home() {
       if (!querySnapshot.empty) return toast("Вже у колекції!", { icon: "😉" });
       await addDoc(collection(db, "favorites"), {
         userId: user.uid,
-        title: animeDetails.title,
-        titleUa: animeDetails.titleUa || animeDetails.title,
-        image: animeDetails.image,
-        url: animeDetails.url,
+        ...animeDetails,
         timestamp: new Date()
       });
       toast.success("Збережено!"); 
       fetchFavorites(user.uid);
     } catch (error) { toast.error("Помилка збереження"); }
-  };
-
-  const fetchFavorites = async (uid) => {
-    try {
-      const q = query(collection(db, "favorites"), where("userId", "==", uid), orderBy("timestamp", "desc"));
-      const querySnapshot = await getDocs(q);
-      setFavorites(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    } catch (error) { console.error(error); }
   };
 
   const removeFavorite = (e, id) => {
@@ -215,7 +214,7 @@ export default function Home() {
       <Toaster position="bottom-right" />
 
       {/* HEADER */}
-      <div className="w-full max-w-7xl mx-auto flex justify-between items-center mb-6">
+      <div className="w-full max-w-7xl mx-auto flex justify-between items-center mb-6 shrink-0">
         <div className="text-3xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent tracking-tight">AniMood ⛩️</div>
         {user ? (
           <div className="flex items-center gap-3 bg-white/5 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/10">
@@ -231,7 +230,6 @@ export default function Home() {
         
         {/* LEFT SECTION: INPUT & GENERATION */}
         <div className={`w-full flex flex-col gap-6 overflow-y-auto pr-1 pb-2 custom-scrollbar ${user ? 'lg:w-7/12' : 'max-w-2xl'}`}>
-          
           <div className="relative bg-[#0f172a]/60 backdrop-blur-xl border border-white/10 rounded-3xl p-2 shadow-lg shrink-0 overflow-hidden">
             
             {/* ЛІЧИЛЬНИК ЗАПИТІВ */}
@@ -281,9 +279,7 @@ export default function Home() {
               )}
               <div className="p-4 sm:p-6 flex-1 flex flex-col">
                 <h3 className="text-xl font-black text-white mb-2 leading-tight">{animeDetails?.titleUa || animeDetails?.title || "Шукаємо..."}</h3>
-                <p className="text-gray-300 text-sm font-medium leading-relaxed mb-4 italic">
-                  "{displayDescription}"
-                </p>
+                <p className="text-gray-300 text-sm font-medium leading-relaxed mb-4 italic">"{displayDescription}"</p>
                 <div className="flex gap-2 mt-auto">
                   {user && animeDetails && (
                     <button onClick={saveToFavorites} className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 px-2 py-2.5 rounded-xl text-xs font-bold transition-all">🤍 Зберегти</button>
@@ -298,51 +294,94 @@ export default function Home() {
 
           {!user && !isLoading && !result && (
             <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-pink-500/30 backdrop-blur-md rounded-2xl p-6 text-center shadow-lg animate-in fade-in slide-in-from-bottom-4">
-              <h3 className="text-lg font-bold text-white mb-2">Бажаєш більше запитів? ⛩️</h3>
-              <p className="text-gray-300 text-sm mb-5">
-                Увійди через Google, щоб збільшити свій ліміт до 15 запитів на день та зберігати обране!
-              </p>
-              <button onClick={handleLogin} className="bg-white text-black px-6 py-2.5 rounded-full text-sm font-bold hover:bg-gray-200 transition-all">Увійти через Google</button>
+              <h3 className="text-lg font-bold text-white mb-2 text-balance">Бажаєш більше запитів? ⛩️</h3>
+              <p className="text-gray-300 text-sm mb-5">Увійди через Google, щоб отримати 15 запитів на день!</p>
+              <button onClick={handleLogin} className="bg-white text-black px-6 py-2.5 rounded-full text-sm font-bold hover:bg-gray-200 transition-all">Увійди через Google</button>
             </div>
           )}
         </div>
 
-        {/* RIGHT SECTION: VAULT */}
+        {/* RIGHT SECTION: VAULT (WITH TABS) */}
         {user && (
           <div className="w-full lg:w-5/12 flex flex-col bg-white/5 backdrop-blur-md rounded-[2rem] border border-white/10 overflow-hidden shadow-2xl h-[60vh] lg:h-auto">
-            <div className="p-5 border-b border-white/10 bg-black/20 shrink-0 flex justify-between items-center">
-               <h2 className="text-sm font-black text-white tracking-[0.2em] flex items-center gap-3">
-                <span className="h-1.5 w-6 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full"></span> 
-                СХОВИЩЕ
-              </h2>
-              <span className="text-[10px] text-gray-400 font-bold bg-white/10 px-3 py-1 rounded-full uppercase tracking-widest">{favorites.length} Елементів</span>
+            
+            {/* ВКЛАДКИ */}
+            <div className="flex border-b border-white/10 bg-black/40 shrink-0">
+              <button 
+                onClick={() => setActiveTab("favorites")}
+                className={`flex-1 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
+                  activeTab === "favorites" ? 'text-white border-b-2 border-purple-500 bg-white/5' : 'text-gray-500'
+                }`}
+              >
+                Обране ({favorites.length})
+              </button>
+              <button 
+                onClick={() => { setActiveTab("history"); fetchHistory(); }}
+                className={`flex-1 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
+                  activeTab === "history" ? 'text-white border-b-2 border-purple-500 bg-white/5' : 'text-gray-500'
+                }`}
+              >
+                Історія ({history.length})
+              </button>
             </div>
             
-            {favorites.length > 0 ? (
-              <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  {favorites.map((fav) => (
-                    <div key={fav.id} className="group relative">
-                      <a href={fav.url} target="_blank" className="block bg-black/40 rounded-xl overflow-hidden border border-white/10 hover:border-pink-500 transition-all shadow-lg">
-                        <div className="aspect-[3/4] overflow-hidden relative">
-                          <img src={fav.image} className="w-full h-full object-cover group-hover:scale-110 opacity-90 transition-all duration-500" />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                            <span onClick={(e) => { e.preventDefault(); window.open(`https://anitube.in.ua/index.php?do=search&subaction=search&story=${encodeURIComponent(fav.title)}`, '_blank'); }} className="text-[9px] font-bold text-white bg-red-600 px-2 py-1 rounded-md w-full text-center cursor-pointer shadow-lg uppercase">▶ Дивитись</span>
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+              {activeTab === "favorites" ? (
+                favorites.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    {favorites.map((fav) => (
+                      <div key={fav.id} className="group relative animate-in fade-in duration-500">
+                        <a href={fav.url} target="_blank" className="block bg-black/40 rounded-xl overflow-hidden border border-white/10 hover:border-pink-500 transition-all shadow-lg">
+                          <div className="aspect-[3/4] overflow-hidden relative">
+                            <img src={fav.image} className="w-full h-full object-cover group-hover:scale-110 opacity-90 transition-all duration-500" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                              <span onClick={(e) => { e.preventDefault(); window.open(`https://anitube.in.ua/index.php?do=search&subaction=search&story=${encodeURIComponent(fav.title)}`, '_blank'); }} className="text-[9px] font-bold text-white bg-red-600 px-2 py-1 rounded-md w-full text-center cursor-pointer shadow-lg uppercase">▶ Дивитись</span>
+                            </div>
                           </div>
+                          <div className="p-2.5">
+                            <p className="text-[10px] font-bold truncate text-gray-200 uppercase tracking-tighter">{fav.titleUa || fav.title}</p>
+                          </div>
+                        </a>
+                        <button onClick={(e) => removeFavorite(e, fav.id)} className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 border border-white/20 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-[10px] z-10">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-30 mt-10">
+                    <span className="text-4xl mb-2">🏮</span>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-center">Тут порожньо</p>
+                  </div>
+                )
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {history.length > 0 ? (
+                    history.map((item) => (
+                      <div key={item.id} className="bg-white/5 p-3 rounded-2xl border border-white/5 hover:border-purple-500/30 transition-all group animate-in slide-in-from-right-4">
+                        <div className="flex justify-between items-start mb-2">
+                           <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">Настрій</span>
+                           <span className="text-[8px] text-gray-500 font-bold uppercase">{item.timestamp?.toDate ? new Date(item.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Щойно'}</span>
                         </div>
-                        <div className="p-2.5"><p className="text-[10px] font-bold truncate text-gray-200 uppercase tracking-tighter" title={fav.titleUa || fav.title}>{fav.titleUa || fav.title}</p></div>
-                      </a>
-                      <button onClick={(e) => removeFavorite(e, fav.id)} className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 border border-white/20 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-[10px] z-10">✕</button>
+                        <p className="text-[11px] text-gray-300 italic mb-2 px-1 line-clamp-1">"{item.mood}"</p>
+                        <div className="flex items-center justify-between gap-3 bg-black/20 p-2 rounded-xl border border-white/5">
+                          <p className="text-xs font-black text-white truncate uppercase tracking-tighter">{item.animeTitleUa || item.animeTitle}</p>
+                          <button 
+                            onClick={() => { setMood(item.mood); generateAnime(); }}
+                            className="shrink-0 text-[9px] font-black text-purple-400 hover:text-white transition-colors uppercase"
+                          >
+                            ПОВТОРИТИ ↺
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-30 mt-10">
+                      <span className="text-4xl mb-2">⏳</span>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Історія порожня</p>
                     </div>
-                  ))}
+                  )}
                 </div>
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-gray-500 opacity-30 p-8">
-                <span className="text-4xl mb-2">🏮</span>
-                <p className="text-[10px] font-black uppercase tracking-widest text-center">Тут порожньо</p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>
