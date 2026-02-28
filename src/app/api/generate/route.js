@@ -7,7 +7,7 @@ export async function POST(req) {
     // Отримуємо настрій ТА історію переглядів (масив)
     const { mood, viewedAnime } = await req.json();
     
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     // Перетворюємо масив на рядок через кому. 
     // Якщо масив є і не порожній, створюємо жорстке правило
