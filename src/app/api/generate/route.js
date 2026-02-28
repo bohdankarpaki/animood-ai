@@ -1,25 +1,32 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Підключаємо наш ключ, який ми сховали в .env.local
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export async function POST(req) {
   try {
-    // Отримуємо настрій, який користувач ввів на сайті
-    const { mood } = await req.json();
-
-    // Вибираємо найшвидшу модель
+    // Отримуємо настрій ТА історію переглядів (масив)
+    const { mood, viewedAnime } = await req.json();
+    
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-    // Прописуємо жорсткі правила для ШІ (Системний промпт)
-const prompt = `Ти — експерт з аніме. Користувач має такий настрій: "${mood}". 
+    // Перетворюємо масив на рядок через кому. 
+    // Якщо масив є і не порожній, створюємо жорстке правило
+    const avoidList = viewedAnime && viewedAnime.length > 0 ? viewedAnime.join(", ") : "";
+    
+    const avoidRule = avoidList 
+      ? `ВАЖЛИВО: Користувач вже бачив ці рекомендації: ${avoidList}. Ти ПОВИНЕН запропонувати АБСОЛЮТНО ІНШЕ аніме. Категорично заборонено повторювати їх!` 
+      : "";
+
+    const prompt = `Ти — елітний сомельє аніме. Користувач має такий настрій: "${mood}". 
 Підбери ОДНЕ ідеальне аніме.
-ВАЖЛИВО: Назву аніме напиши англійською мовою (Romaji/English), а опис — українською.
-Формат відповіді: Назва | Опис. Не пиши нічого зайвого.`;
-    // Запускаємо потокову генерацію (Real-time комунікація)
+${avoidRule}
+Опис має бути дуже атмосферним, інтригуючим, БЕЗ спойлерів і КОРОТКИМ (максимум 2-3 речення), щоб легко читався на екрані.
+ВАЖЛИВО: Дотримуйся чіткого формату з трьох частин, розділених символом "|".
+Формат: Назва англійською/Romaji (оригінал) | Короткий захоплюючий опис українською | Назва українською.
+Не пиши ніяких вступних слів.`;
+
     const result = await model.generateContentStream(prompt);
 
-    // Створюємо потік даних для відправки на фронтенд по шматочках
     const stream = new ReadableStream({
       async start(controller) {
         for await (const chunk of result.stream) {
@@ -30,11 +37,8 @@ const prompt = `Ти — експерт з аніме. Користувач ма
       },
     });
 
-    // Повертаємо потік на наш сайт
     return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-      },
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   } catch (error) {
     console.error("Помилка API:", error);
