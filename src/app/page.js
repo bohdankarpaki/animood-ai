@@ -19,7 +19,8 @@ export default function Home() {
   const [usage, setUsage] = useState({ count: 0, limit: 3 });
   const [history, setHistory] = useState([]);
   const [activeTab, setActiveTab] = useState("favorites"); // "favorites" або "history"
-
+  const isAdmin = user?.uid === "RzEsBfPOmsWazI6kevduWjCjv8S2";
+ 
   // ОНОВЛЕННЯ ЛІМІТІВ
   const refreshUsage = async () => {
     try {
@@ -237,18 +238,42 @@ const selectHistoryItem = (item) => {
   };
 
   const displayDescription = result.includes('|') ? result.split('|')[1] : "Шукаю ідеальний тайтл...";
-
   return (
     <main className="min-h-screen lg:h-screen lg:overflow-hidden bg-[#050505] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#2e0b4b] via-[#0f172a] to-[#050505] text-white p-4 sm:p-6 font-sans flex flex-col">
       <Toaster position="bottom-right" />
 
       {/* HEADER */}
+      {/* HEADER */}
       <div className="w-full max-w-7xl mx-auto flex justify-between items-center mb-6 shrink-0">
         <div className="text-3xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent tracking-tight">AniMood ⛩️</div>
+        
         {user ? (
-          <div className="flex items-center gap-3 bg-white/5 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/10">
-            <img src={user.photoURL} className="w-8 h-8 rounded-full border border-purple-500" alt="avatar" />
-            <button onClick={handleLogout} className="text-xs text-gray-300 hover:text-pink-400 font-bold transition-colors">Вийти</button>
+          <div className="flex items-center gap-4">
+            {isAdmin ? (
+              /* 👑 ПИШНИЙ VIP-БЕЙДЖ ДЛЯ АДМІНА */
+              <div className="relative group flex items-center gap-3 bg-gradient-to-r from-amber-950/80 to-purple-950/80 border border-amber-500/50 rounded-2xl p-1.5 pr-4 shadow-[0_0_25px_rgba(245,158,11,0.25)] hover:shadow-[0_0_40px_rgba(245,158,11,0.4)] transition-all duration-500 cursor-default backdrop-blur-md">
+                {/* Аватарка Google + Корона */}
+                <div className="relative w-9 h-9">
+                  <div className="absolute inset-0 rounded-full border-2 border-amber-400 animate-ping opacity-30"></div>
+                  <img src={user.photoURL} className="w-full h-full rounded-full border-2 border-amber-400 object-cover relative z-10" alt="admin" />
+                  <span className="absolute -top-3 -right-3 text-xl drop-shadow-[0_0_10px_rgba(245,158,11,0.8)] z-20 animate-bounce">👑</span>
+                </div>
+                {/* Текст */}
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black tracking-[0.2em] text-amber-500/90 uppercase drop-shadow-md">Supreme Architect</span>
+                  <span className="text-xs font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-amber-100 via-yellow-400 to-amber-200 truncate max-w-[100px]">{user.displayName || "Богдан"}</span>
+                </div>
+              </div>
+            ) : (
+              /* 👤 СТАНДАРТНИЙ БЕЙДЖ ДЛЯ ЮЗЕРІВ */
+              <div className="flex items-center gap-2 bg-white/5 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/10">
+                <img src={user.photoURL} className="w-8 h-8 rounded-full border border-purple-500" alt="avatar" />
+                <span className="text-xs font-bold text-white/90 truncate max-w-[100px]">{user.displayName}</span>
+              </div>
+            )}
+            
+            {/* Кнопка виходу */}
+            <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-pink-400 font-bold transition-colors">Вийти</button>
           </div>
         ) : (
           <button onClick={handleLogin} className="bg-white/10 backdrop-blur-sm text-white border border-white/20 px-6 py-2 rounded-full text-sm font-bold hover:bg-white hover:text-black transition-all">Увійти</button>
@@ -265,17 +290,20 @@ const selectHistoryItem = (item) => {
             <div className="px-4 pt-3 pb-1">
               <div className="flex justify-between items-center mb-1.5">
                 <span className="text-[10px] font-black uppercase tracking-[0.15em] text-gray-400 flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${usage.count >= usage.limit ? 'bg-red-500 animate-pulse' : 'bg-purple-500'}`}></span>
+                  {/* Крапка: для адміна золота пульсуюча, для юзерів - звичайна/червона */}
+                  <span className={`w-1.5 h-1.5 rounded-full ${isAdmin ? 'bg-amber-400 animate-pulse' : (usage.count >= usage.limit ? 'bg-red-500 animate-pulse' : 'bg-purple-500')}`}></span>
                   Запити на сьогодні
                 </span>
-                <span className="text-[10px] font-black text-white bg-white/10 px-2 py-0.5 rounded-md border border-white/5">
-                  {usage.count} / {usage.limit}
+                {/* Значення лічильника */}
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${isAdmin ? 'text-amber-400 bg-amber-500/10 border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'text-white bg-white/10 border-white/5'}`}>
+                  {isAdmin ? '♾️ БЕЗЛІМІТ' : `${usage.count} / ${usage.limit}`}
                 </span>
               </div>
+              {/* Смужка прогресу */}
               <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
                 <div 
-                  className={`h-full transition-all duration-1000 ease-out ${usage.count >= usage.limit ? 'bg-red-500 shadow-[0_0_8px_#ef4444]' : 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-[0_0_8px_#a855f7]'}`}
-                  style={{ width: `${Math.min((usage.count / usage.limit) * 100, 100)}%` }}
+                  className={`h-full transition-all duration-1000 ease-out ${isAdmin ? 'bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : (usage.count >= usage.limit ? 'bg-red-500 shadow-[0_0_8px_#ef4444]' : 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-[0_0_8px_#a855f7]')}`}
+                  style={{ width: isAdmin ? '100%' : `${Math.min((usage.count / usage.limit) * 100, 100)}%` }}
                 ></div>
               </div>
             </div>
@@ -297,7 +325,6 @@ const selectHistoryItem = (item) => {
             </button>
           </div>
 
-          {/* RESULT CARD */}
           {/* RESULT CARD */}
           {result && (
             result === "ERROR" ? (
