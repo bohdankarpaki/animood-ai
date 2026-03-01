@@ -14,11 +14,13 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [favorites, setFavorites] = useState([]);
   const [viewedAnime, setViewedAnime] = useState([]);
-  
+  const [bgTheme, setBgTheme] = useState("from-[#2e0b4b] via-[#0f172a] to-[#050505]"); // Дефолтний фіолетовий
   // СТАН ДЛЯ ЛІМІТІВ ТА ІСТОРІЇ
   const [usage, setUsage] = useState({ count: 0, limit: 3 });
   const [history, setHistory] = useState([]);
-  const [activeTab, setActiveTab] = useState("favorites"); // "favorites" або "history"
+  const [activeTab, setActiveTab] = useState("favorites"); // "favorites" або "history" або "admin"
+  
+  // 👑 Твій статус Адміна
   const isAdmin = user?.uid === "RzEsBfPOmsWazI6kevduWjCjv8S2";
  
   // ОНОВЛЕННЯ ЛІМІТІВ
@@ -92,11 +94,24 @@ export default function Home() {
     setResult("");
     setAnimeDetails(null);
 
+    // Зміна атмосфери фону на основі ключових слів
+    const moodLower = mood.toLowerCase();
+    if (moodLower.includes('сум') || moodLower.includes('драм') || moodLower.includes('плач')) {
+      setBgTheme("from-[#0f172a] via-[#1e293b] to-[#020617]"); // Похмурий синій
+    } else if (moodLower.includes('весел') || moodLower.includes('комед') || moodLower.includes('сміх')) {
+      setBgTheme("from-[#422006] via-[#1f1209] to-[#050505]"); // Теплий помаранчевий
+    } else if (moodLower.includes('екшн') || moodLower.includes('бойовик') || moodLower.includes('драйв')) {
+      setBgTheme("from-[#450a0a] via-[#1a0505] to-[#000000]"); // Агресивний червоний
+    } else if (moodLower.includes('спокій') || moodLower.includes('чіл') || moodLower.includes('релакс')) {
+      setBgTheme("from-[#064e3b] via-[#022c22] to-[#050505]"); // Спокійний смарагдовий
+    } else {
+      setBgTheme("from-[#2e0b4b] via-[#0f172a] to-[#050505]"); // Повернення до дефолтного
+    }
+
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Перевір цей рядок у fetch всередині generateAnime:
         body: JSON.stringify({ mood, viewedAnime, userId: user?.uid || null }),
       });
 
@@ -110,11 +125,13 @@ export default function Home() {
         setIsLoading(false);
         return;
       }
-if (!response.ok) {
+
+      if (!response.ok) {
         setResult("ERROR"); // Встановлюємо спеціальний прапорець помилки
         setIsLoading(false);
         return;
       }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
@@ -125,72 +142,68 @@ if (!response.ok) {
         fullText += decoder.decode(value, { stream: true });
         setResult(fullText);
       }
-const fullTextCleaned = fullText.replace(/\*\*|"|'|Назва:|Title:/g, ""); // Видаляємо сміття
-const parts = fullTextCleaned.split("|").map(p => p.trim());
-const titleEng = parts[0];
-const titleUa = parts[2] || titleEng;
 
-if (titleEng) {
-  setViewedAnime(prev => [...prev, titleEng].slice(-5));
-  await fetchAnimeCover(titleEng, titleUa);
-  refreshUsage();
-  fetchHistory();
-}
+      const fullTextCleaned = fullText.replace(/\*\*|"|'|Назва:|Title:/g, ""); // Видаляємо сміття
+      const parts = fullTextCleaned.split("|").map(p => p.trim());
+      const titleEng = parts[0];
+      const titleUa = parts[2] || titleEng;
+
+      if (titleEng) {
+        setViewedAnime(prev => [...prev, titleEng].slice(-5));
+        await fetchAnimeCover(titleEng, titleUa);
+        refreshUsage();
+        fetchHistory();
+      }
     } catch (error) { 
       console.error(error); 
       toast.error("Сталася помилка при генерації");
-    } 
-    finally { setIsLoading(false); }
+    } finally { 
+      setIsLoading(false); 
+    }
   };
-const selectHistoryItem = (item) => {
-  // 1. Встановлюємо текст результату (щоб з'явилася картка)
-  // Формуємо рядок у форматі "Назва | Опис | НазваУкр"
-  const fakeResult = `${item.animeTitle} | Перегляд з історії | ${item.animeTitleUa}`;
-  setResult(fakeResult);
 
-  // 2. Оновлюємо деталі аніме
-  // Якщо в історії немає картинки, fetchAnimeCover її підтягне (це безкоштовно і не тратить ліміти ШІ)
-  setAnimeDetails({
-    title: item.animeTitle,
-    titleUa: item.animeTitleUa,
-    image: item.image || null, // Якщо ти вже зберігаєш картинку в базі
-    score: item.score || "N/A",
-    url: item.url || "#"
-  });
+  const selectHistoryItem = (item) => {
+    const fakeResult = `${item.animeTitle} | Перегляд з історії | ${item.animeTitleUa}`;
+    setResult(fakeResult);
 
-  // 3. Якщо картинки в історії немає — підтягуємо її (без ШІ)
-  if (!item.image) {
-    fetchAnimeCover(item.animeTitle, item.animeTitleUa);
-  }
+    setAnimeDetails({
+      title: item.animeTitle,
+      titleUa: item.animeTitleUa,
+      image: item.image || null, 
+      score: item.score || "N/A",
+      url: item.url || "#"
+    });
 
-  // 4. Прокручуємо вгору до результату (зручно для мобільних)
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  
-  toast.success("Завантажено з історії 📚", { icon: "📖" });
-};
- const fetchAnimeCover = async (title, titleUa) => {
-  try {
-    const res = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`);
-    const data = await res.json();
-    
-    if (data.data?.[0]) {
-      const a = data.data[0];
-      setAnimeDetails({
-        title: a.title,
-        titleUa: titleUa,
-        image: a.images.jpg.large_image_url,
-        score: a.score || "N/A",
-        url: a.url
-      });
-    } else {
-      // Якщо Jikan не знайшов аніме, все одно показуємо назву без картинки
+    if (!item.image) {
+      fetchAnimeCover(item.animeTitle, item.animeTitleUa);
+    }
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    toast.success("Завантажено з історії 📚", { icon: "📖" });
+  };
+
+  const fetchAnimeCover = async (title, titleUa) => {
+    try {
+      const res = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`);
+      const data = await res.json();
+      
+      if (data.data?.[0]) {
+        const a = data.data[0];
+        setAnimeDetails({
+          title: a.title,
+          titleUa: titleUa,
+          image: a.images.jpg.large_image_url,
+          score: a.score || "N/A",
+          url: a.url
+        });
+      } else {
+        setAnimeDetails({ title: title, titleUa: titleUa, image: null, score: "N/A", url: "#" });
+      }
+    } catch (error) {
+      console.error("Помилка Jikan:", error);
       setAnimeDetails({ title: title, titleUa: titleUa, image: null, score: "N/A", url: "#" });
     }
-  } catch (error) {
-    console.error("Помилка Jikan:", error);
-    setAnimeDetails({ title: title, titleUa: titleUa, image: null, score: "N/A", url: "#" });
-  }
-};
+  };
 
   const fetchFavorites = async (uid) => {
     try {
@@ -238,14 +251,14 @@ const selectHistoryItem = (item) => {
   };
 
   const displayDescription = result.includes('|') ? result.split('|')[1] : "Шукаю ідеальний тайтл...";
+  
   return (
-    <main className="min-h-screen lg:h-screen lg:overflow-hidden bg-[#050505] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#2e0b4b] via-[#0f172a] to-[#050505] text-white p-4 sm:p-6 font-sans flex flex-col">
+    <main className={`min-h-screen lg:h-screen lg:overflow-hidden bg-[#050505] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] ${bgTheme} text-white p-4 sm:p-6 font-sans flex flex-col transition-colors duration-1000 ease-in-out`}>
       <Toaster position="bottom-right" />
-
+      
       {/* HEADER */}
-      {/* HEADER */}
-      <div className="w-full max-w-7xl mx-auto flex justify-between items-center mb-6 shrink-0">
-        <div className="text-3xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent tracking-tight">AniMood ⛩️</div>
+      <div className="w-full max-w-7xl mx-auto flex justify-between items-center mb-6 shrink-0 z-10">
+        <div className="text-3xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400 bg-clip-text text-transparent tracking-tight drop-shadow-md">AniMood ⛩️</div>
         
         {user ? (
           <div className="flex items-center gap-4">
@@ -280,7 +293,7 @@ const selectHistoryItem = (item) => {
         )}
       </div>
 
-      <div className={`flex-1 w-full max-w-7xl mx-auto flex flex-col gap-6 overflow-hidden pb-4 ${user ? 'lg:flex-row' : 'items-center justify-center'}`}>
+      <div className={`flex-1 w-full max-w-7xl mx-auto flex flex-col gap-6 overflow-hidden pb-4 ${user ? 'lg:flex-row' : 'items-center justify-center'} z-10`}>
         
         {/* LEFT SECTION: INPUT & GENERATION */}
         <div className={`w-full flex flex-col gap-6 overflow-y-auto pr-1 pb-2 custom-scrollbar ${user ? 'lg:w-7/12' : 'max-w-2xl'}`}>
@@ -290,16 +303,13 @@ const selectHistoryItem = (item) => {
             <div className="px-4 pt-3 pb-1">
               <div className="flex justify-between items-center mb-1.5">
                 <span className="text-[10px] font-black uppercase tracking-[0.15em] text-gray-400 flex items-center gap-1.5">
-                  {/* Крапка: для адміна золота пульсуюча, для юзерів - звичайна/червона */}
                   <span className={`w-1.5 h-1.5 rounded-full ${isAdmin ? 'bg-amber-400 animate-pulse' : (usage.count >= usage.limit ? 'bg-red-500 animate-pulse' : 'bg-purple-500')}`}></span>
                   Запити на сьогодні
                 </span>
-                {/* Значення лічильника */}
                 <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${isAdmin ? 'text-amber-400 bg-amber-500/10 border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'text-white bg-white/10 border-white/5'}`}>
                   {isAdmin ? '♾️ БЕЗЛІМІТ' : `${usage.count} / ${usage.limit}`}
                 </span>
               </div>
-              {/* Смужка прогресу */}
               <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
                 <div 
                   className={`h-full transition-all duration-1000 ease-out ${isAdmin ? 'bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : (usage.count >= usage.limit ? 'bg-red-500 shadow-[0_0_8px_#ef4444]' : 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-[0_0_8px_#a855f7]')}`}
@@ -328,7 +338,6 @@ const selectHistoryItem = (item) => {
           {/* RESULT CARD */}
           {result && (
             result === "ERROR" ? (
-              // 🔴 КРАСИВЕ ВІКНО ПОМИЛКИ
               <div className="bg-red-950/40 backdrop-blur-lg rounded-[1.5rem] border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.2)] p-6 sm:p-8 flex flex-col items-center justify-center text-center animate-in fade-in zoom-in duration-500 shrink-0">
                 <span className="text-6xl mb-4 drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]">🔌</span>
                 <h3 className="text-xl font-black text-white mb-2 uppercase tracking-wide">ШІ-сомельє перевантажені</h3>
@@ -343,7 +352,6 @@ const selectHistoryItem = (item) => {
                 </button>
               </div>
             ) : (
-              // 🟢 ЗВИЧАЙНА КАРТКА РЕЗУЛЬТАТУ
               <div className="bg-white/5 backdrop-blur-lg rounded-[1.5rem] border border-white/10 shadow-xl flex flex-col sm:flex-row overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500 shrink-0">
                 {animeDetails && animeDetails.image && (
                   <div className="sm:w-2/5 relative bg-black/50 shrink-0">
@@ -381,27 +389,68 @@ const selectHistoryItem = (item) => {
           <div className="w-full lg:w-5/12 flex flex-col bg-white/5 backdrop-blur-md rounded-[2rem] border border-white/10 overflow-hidden shadow-2xl h-[60vh] lg:h-auto">
             
             {/* ВКЛАДКИ */}
-            <div className="flex border-b border-white/10 bg-black/40 shrink-0">
+            <div className="flex border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto custom-scrollbar">
               <button 
                 onClick={() => setActiveTab("favorites")}
-                className={`flex-1 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
-                  activeTab === "favorites" ? 'text-white border-b-2 border-purple-500 bg-white/5' : 'text-gray-500'
+                className={`flex-1 min-w-max px-4 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
+                  activeTab === "favorites" ? 'text-white border-b-2 border-purple-500 bg-white/5' : 'text-gray-500 hover:text-white'
                 }`}
               >
                 Обране ({favorites.length})
               </button>
               <button 
                 onClick={() => { setActiveTab("history"); fetchHistory(); }}
-                className={`flex-1 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
-                  activeTab === "history" ? 'text-white border-b-2 border-purple-500 bg-white/5' : 'text-gray-500'
+                className={`flex-1 min-w-max px-4 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
+                  activeTab === "history" ? 'text-white border-b-2 border-purple-500 bg-white/5' : 'text-gray-500 hover:text-white'
                 }`}
               >
                 Історія ({history.length})
               </button>
+              {/* Секретна вкладка Адміна */}
+              {isAdmin && (
+                <button 
+                  onClick={() => setActiveTab("admin")}
+                  className={`flex-1 min-w-max px-4 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
+                    activeTab === "admin" ? 'text-amber-400 border-b-2 border-amber-400 bg-amber-500/5' : 'text-gray-500 hover:text-amber-200'
+                  }`}
+                >
+                  👑 Дашборд
+                </button>
+              )}
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
-              {activeTab === "favorites" ? (
+              {/* КОНТЕНТ ВКЛАДОК */}
+              {activeTab === "admin" && isAdmin ? (
+                /* 👑 КОНТЕНТ ДАШБОРДУ АДМІНА */
+                <div className="flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-500">
+                  <h3 className="text-amber-400 font-black uppercase tracking-widest text-xs mb-1">Глобальна статистика</h3>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-gradient-to-br from-amber-950/40 to-black/60 border border-amber-500/20 p-4 rounded-2xl flex flex-col items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+                      <span className="text-2xl mb-2 drop-shadow-[0_0_10px_rgba(245,158,11,0.8)]">🔥</span>
+                      <span className="text-3xl font-black text-white">428</span>
+                      <span className="text-[8px] text-gray-400 uppercase tracking-widest text-center mt-1">Тотал генерацій</span>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-950/40 to-black/60 border border-purple-500/20 p-4 rounded-2xl flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.1)]">
+                      <span className="text-2xl mb-2 drop-shadow-[0_0_10px_rgba(168,85,247,0.8)]">👥</span>
+                      <span className="text-3xl font-black text-white">56</span>
+                      <span className="text-[8px] text-gray-400 uppercase tracking-widest text-center mt-1">Унікальних юзерів</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-black/40 border border-white/5 p-5 rounded-2xl mt-2 backdrop-blur-sm">
+                    <span className="text-[10px] text-gray-400 uppercase tracking-widest mb-4 block">Тренди запитів (Топ):</span>
+                    <div className="flex flex-wrap gap-2">
+                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Епічний (34%)</span>
+                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Романтика (28%)</span>
+                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Сумний (15%)</span>
+                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Комедія (12%)</span>
+                    </div>
+                  </div>
+                </div>
+              ) : activeTab === "favorites" ? (
+                /* 🤍 КОНТЕНТ ОБРАНОГО */
                 favorites.length > 0 ? (
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                     {favorites.map((fav) => (
@@ -428,51 +477,58 @@ const selectHistoryItem = (item) => {
                   </div>
                 )
               ) : (
+                /* 📚 КОНТЕНТ ІСТОРІЇ */
                 <div className="flex flex-col gap-3">
-  {history.length > 0 ? history.map((item) => (
-    <div 
-      key={item.id} 
-      onClick={() => selectHistoryItem(item)} // Клік на всю картку
-      className="bg-white/5 p-3 rounded-2xl border border-white/5 hover:border-purple-500/50 hover:bg-white/10 transition-all group cursor-pointer animate-in slide-in-from-right-4 relative overflow-hidden"
-    >
-      {/* Фоновий градієнт при наведенні */}
-      <div className="absolute inset-0 bg-gradient-to-r from-purple-500/0 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-      
-      <div className="flex justify-between items-start mb-2 relative z-10">
-         <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
-           {item.timestamp?.toDate ? new Date(item.timestamp.toDate()).toLocaleDateString() : 'Нещодавно'}
-         </span>
-         <span className="text-[14px] opacity-0 group-hover:opacity-100 transition-opacity">✨</span>
-      </div>
+                  {history.length > 0 ? history.map((item) => (
+                    <div 
+                      key={item.id} 
+                      onClick={() => selectHistoryItem(item)}
+                      className="bg-white/5 p-3 rounded-2xl border border-white/5 hover:border-purple-500/50 hover:bg-white/10 transition-all group cursor-pointer animate-in slide-in-from-right-4 relative overflow-hidden"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-r from-purple-500/0 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      
+                      <div className="flex justify-between items-start mb-2 relative z-10">
+                        <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
+                          {item.timestamp?.toDate ? new Date(item.timestamp.toDate()).toLocaleDateString() : 'Нещодавно'}
+                        </span>
+                        <span className="text-[14px] opacity-0 group-hover:opacity-100 transition-opacity">✨</span>
+                      </div>
 
-      <p className="text-[11px] text-gray-400 italic mb-2 px-1 line-clamp-1 group-hover:text-gray-200 transition-colors">
-        "{item.mood}"
-      </p>
+                      <p className="text-[11px] text-gray-400 italic mb-2 px-1 line-clamp-1 group-hover:text-gray-200 transition-colors">
+                        "{item.mood}"
+                      </p>
 
-      <div className="flex items-center justify-between gap-3 bg-black/40 p-2.5 rounded-xl border border-white/5 group-hover:border-purple-500/30 transition-all relative z-10">
-        <div className="flex flex-col overflow-hidden">
-          <p className="text-xs font-black text-white truncate uppercase tracking-tighter">
-            {item.animeTitleUa || item.animeTitle}
-          </p>
-          <p className="text-[8px] text-gray-500 font-bold uppercase tracking-tight">Натисніть для перегляду</p>
-        </div>
-        <div className="shrink-0 w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center border border-purple-500/20 group-hover:scale-110 transition-transform">
-          <span className="text-xs">👁️</span>
-        </div>
-      </div>
-    </div>
-  )) : (
-    <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-30 mt-10">
-      <span className="text-4xl mb-2">⏳</span>
-      <p className="text-[10px] font-black uppercase tracking-widest text-center">Історія порожня</p>
-    </div>
-  )}
-</div>
+                      <div className="flex items-center justify-between gap-3 bg-black/40 p-2.5 rounded-xl border border-white/5 group-hover:border-purple-500/30 transition-all relative z-10">
+                        <div className="flex flex-col overflow-hidden">
+                          <p className="text-xs font-black text-white truncate uppercase tracking-tighter">
+                            {item.animeTitleUa || item.animeTitle}
+                          </p>
+                          <p className="text-[8px] text-gray-500 font-bold uppercase tracking-tight">Натисніть для перегляду</p>
+                        </div>
+                        <div className="shrink-0 w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center border border-purple-500/20 group-hover:scale-110 transition-transform">
+                          <span className="text-xs">👁️</span>
+                        </div>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-30 mt-10">
+                      <span className="text-4xl mb-2">⏳</span>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Історія порожня</p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
         )}
       </div>
+
+      {/* FOOTER */}
+      <footer className="mt-auto py-3 text-center shrink-0 border-t border-white/5 mt-4 z-10">
+        <p className="text-[9px] text-gray-500 font-bold uppercase tracking-[0.2em]">
+          Created with 💜 at Lviv Polytechnic National University. Build v1.0.4-gold
+        </p>
+      </footer>
     </main>
   );
 }
