@@ -39,3 +39,25 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# Секретні ключі (найважливіше!)
+.env
+.env.local
+.env.production
+.env*.local
+
+# Залежності
+node_modules/
+
+# Збірка Next.js
+.next/
+out/
+build/
+
+# Логи та сміття ОС
+*.log
+.DS_Store
+Thumbs.db
+
+# Налаштування редактора (опціонально, але корисно)
+.vscode/
+.idea/

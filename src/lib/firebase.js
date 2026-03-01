@@ -2,21 +2,18 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// Твої дані, які ти скопіював із сайту
 const firebaseConfig = {
-  apiKey: "AIzaSyA0jp1_geMSSu4RfbOUW57Vv7wTC97yZXY",
-  authDomain: "animood-ai.firebaseapp.com",
-  projectId: "animood-ai",
-  storageBucket: "animood-ai.firebasestorage.app",
-  messagingSenderId: "802320765435",
-  appId: "1:802320765435:web:07a98105466cccdc83bb5e",
-  measurementId: "G-8XQYJE10CZ"
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
-// Ініціалізуємо додаток
 const app = initializeApp(firebaseConfig);
 
-// Додаємо EXPORT, щоб інші файли могли бачити ці сервіси
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 export const db = getFirestore(app);
