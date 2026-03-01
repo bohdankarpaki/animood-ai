@@ -4,12 +4,12 @@ import { doc, getDoc, setDoc, updateDoc, increment, collection, addDoc, serverTi
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Використовуємо моделі з Unlimited лімітами для стабільності
+// Використовуємо існуючі ID моделей згідно з твоїми квотами
 const MODELS_PRIORITY = [
- "gemini-2.0-flash-lite",      
-  
-  "gemini-2.5-flash-lite", 
-  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite", // Unlimited RPD — пріоритет №1
+  "gemini-2.0-flash",                    // Високі ліміти RPM
+                   // Стабільний бекап
+  "gemini-2.5-flash-lite"        // Дуже обмежена квота (2 запити/день)
 ];
 
 export async function POST(req) {
@@ -26,46 +26,69 @@ export async function POST(req) {
     const today = new Date().toISOString().split('T')[0];
     const usageRef = doc(db, "usage", identifier);
     
-    // ПЕРЕВІРКА ЛІМІТІВ
+    // 1. ПЕРЕВІРКА ЛІМІТІВ
     const usageSnap = await getDoc(usageRef);
     if (usageSnap.exists() && usageSnap.data().lastDate === today && usageSnap.data().count >= limit) {
-      return new Response(JSON.stringify({ error: "LIMIT_REACHED" }), { status: 403 });
+      return new Response(JSON.stringify({ 
+        error: "LIMIT_REACHED", 
+        message: `Вичерпано ліміт (${limit} зап./день).` 
+      }), { status: 403 });
     }
+
+    // Підготовка списку для виключення
+    const avoidText = viewedAnime?.length > 0 ? `ЗАБОРОНЕНО пропонувати: ${viewedAnime.join(", ")}.` : "";
 
     let result = null;
+    let usedModel = "";
+
+    // 2. ЦИКЛ ГЕНЕРАЦІЇ З FALLBACK
     for (const modelName of MODELS_PRIORITY) {
       try {
+        console.log(`📡 Запит до моделі: ${modelName}`);
         const model = genAI.getGenerativeModel({ model: modelName });
-        const prompt = `Ти — аніме-сомельє. Настрій: "${mood}". Підбери 1 аніме.
-        ФОРМАТ ВІДПОВІДІ: Назва Eng | Опис | Назва Укр. 
-        ВАЖЛИВО: Тільки текст, розділений "|". Без лапок та зірочок.`;
+        
+        const prompt = `Ти — елітний сомельє аніме. Настрій користувача: "${mood}". 
+        Підбери ОДНЕ ідеальне аніме. ${avoidText}
+
+        ВИМОГИ ДО ОПИСУ:
+        - Рівно 3-4 речення.
+        - Атмосферно поясни, чому цей тайтл підходить під вказаний настрій.
+        - Без спойлерів.
+
+        ФОРМАТ ВІДПОВІДІ: Назва Eng | Опис Укр | Назва Укр. (Без лапок та зірочок)`;
         
         result = await model.generateContentStream(prompt);
-        if (result) break; 
-      } catch (err) { continue; }
+        if (result) {
+          usedModel = modelName;
+          break; 
+        }
+      } catch (err) {
+        console.error(`⚠️ ${modelName} недоступна, йду далі...`);
+        continue; 
+      }
     }
 
-    if (!result) throw new Error("API Unavailable");
+    if (!result) throw new Error("Усі моделі ШІ зараз перевантажені.");
 
-    // Оновлюємо лічильник запитів
+    // 3. ОНОВЛЕННЯ ЛІЧИЛЬНИКА
     await setDoc(usageRef, { count: increment(1), lastDate: today }, { merge: true });
 
     const stream = new ReadableStream({
       async start(controller) {
         let fullText = ""; 
 
-        for await (const chunk of result.stream) {
-          const chunkText = chunk.text();
-          fullText += chunkText;
-          controller.enqueue(new TextEncoder().encode(chunkText));
-        }
+        try {
+          for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            fullText += chunkText;
+            controller.enqueue(new TextEncoder().encode(chunkText));
+          }
 
-        // ЗАПИС В ІСТОРІЮ ПІСЛЯ ЗАВЕРШЕННЯ ГЕНЕРАЦІЇ
-        if (validUserId && fullText.includes("|")) {
-          try {
-            const parts = fullText.replace(/\*\*|"/g, "").split("|").map(p => p.trim());
+          // 4. ЗАПИС В ІСТОРІЮ ПІСЛЯ СТРІМУ
+          if (validUserId && fullText.includes("|")) {
+            const cleanText = fullText.replace(/\*\*|"/g, "");
+            const parts = cleanText.split("|").map(p => p.trim());
             
-            // Записуємо тільки якщо розбиття пройшло успішно
             if (parts.length >= 2) {
               await addDoc(collection(db, "history"), {
                 userId: validUserId,
@@ -74,11 +97,11 @@ export async function POST(req) {
                 animeTitleUa: parts[2] || parts[0],
                 timestamp: serverTimestamp()
               });
-              console.log("✅ Історію збережено для:", validUserId);
+              console.log(`✅ Історію збережено (${usedModel})`);
             }
-          } catch (e) {
-            console.error("❌ Помилка Firebase History:", e.message);
           }
+        } catch (e) {
+          console.error("❌ Помилка в потоці або БД:", e.message);
         }
         controller.close();
       },
@@ -87,7 +110,7 @@ export async function POST(req) {
     return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 
   } catch (error) {
-    console.error("API Error:", error);
-    return new Response("Error", { status: 500 });
+    console.error("API Error:", error.message);
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
 }

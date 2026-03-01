@@ -96,7 +96,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Перевір цей рядок у fetch всередині generateAnime:
-body: JSON.stringify({ mood, viewedAnime, userId: user?.uid || null }),
+        body: JSON.stringify({ mood, viewedAnime, userId: user?.uid || null }),
       });
 
       if (response.status === 403) {
@@ -137,7 +137,32 @@ if (titleEng) {
     } 
     finally { setIsLoading(false); }
   };
+const selectHistoryItem = (item) => {
+  // 1. Встановлюємо текст результату (щоб з'явилася картка)
+  // Формуємо рядок у форматі "Назва | Опис | НазваУкр"
+  const fakeResult = `${item.animeTitle} | Перегляд з історії | ${item.animeTitleUa}`;
+  setResult(fakeResult);
 
+  // 2. Оновлюємо деталі аніме
+  // Якщо в історії немає картинки, fetchAnimeCover її підтягне (це безкоштовно і не тратить ліміти ШІ)
+  setAnimeDetails({
+    title: item.animeTitle,
+    titleUa: item.animeTitleUa,
+    image: item.image || null, // Якщо ти вже зберігаєш картинку в базі
+    score: item.score || "N/A",
+    url: item.url || "#"
+  });
+
+  // 3. Якщо картинки в історії немає — підтягуємо її (без ШІ)
+  if (!item.image) {
+    fetchAnimeCover(item.animeTitle, item.animeTitleUa);
+  }
+
+  // 4. Прокручуємо вгору до результату (зручно для мобільних)
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  
+  toast.success("Завантажено з історії 📚", { icon: "📖" });
+};
  const fetchAnimeCover = async (title, titleUa) => {
   try {
     const res = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`);
@@ -354,32 +379,45 @@ if (titleEng) {
                 )
               ) : (
                 <div className="flex flex-col gap-3">
-                  {history.length > 0 ? (
-                    history.map((item) => (
-                      <div key={item.id} className="bg-white/5 p-3 rounded-2xl border border-white/5 hover:border-purple-500/30 transition-all group animate-in slide-in-from-right-4">
-                        <div className="flex justify-between items-start mb-2">
-                           <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">Настрій</span>
-                           <span className="text-[8px] text-gray-500 font-bold uppercase">{item.timestamp?.toDate ? new Date(item.timestamp.toDate()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Щойно'}</span>
-                        </div>
-                        <p className="text-[11px] text-gray-300 italic mb-2 px-1 line-clamp-1">"{item.mood}"</p>
-                        <div className="flex items-center justify-between gap-3 bg-black/20 p-2 rounded-xl border border-white/5">
-                          <p className="text-xs font-black text-white truncate uppercase tracking-tighter">{item.animeTitleUa || item.animeTitle}</p>
-                          <button 
-                            onClick={() => { setMood(item.mood); generateAnime(); }}
-                            className="shrink-0 text-[9px] font-black text-purple-400 hover:text-white transition-colors uppercase"
-                          >
-                            ПОВТОРИТИ ↺
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-30 mt-10">
-                      <span className="text-4xl mb-2">⏳</span>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Історія порожня</p>
-                    </div>
-                  )}
-                </div>
+  {history.length > 0 ? history.map((item) => (
+    <div 
+      key={item.id} 
+      onClick={() => selectHistoryItem(item)} // Клік на всю картку
+      className="bg-white/5 p-3 rounded-2xl border border-white/5 hover:border-purple-500/50 hover:bg-white/10 transition-all group cursor-pointer animate-in slide-in-from-right-4 relative overflow-hidden"
+    >
+      {/* Фоновий градієнт при наведенні */}
+      <div className="absolute inset-0 bg-gradient-to-r from-purple-500/0 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+      
+      <div className="flex justify-between items-start mb-2 relative z-10">
+         <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
+           {item.timestamp?.toDate ? new Date(item.timestamp.toDate()).toLocaleDateString() : 'Нещодавно'}
+         </span>
+         <span className="text-[14px] opacity-0 group-hover:opacity-100 transition-opacity">✨</span>
+      </div>
+
+      <p className="text-[11px] text-gray-400 italic mb-2 px-1 line-clamp-1 group-hover:text-gray-200 transition-colors">
+        "{item.mood}"
+      </p>
+
+      <div className="flex items-center justify-between gap-3 bg-black/40 p-2.5 rounded-xl border border-white/5 group-hover:border-purple-500/30 transition-all relative z-10">
+        <div className="flex flex-col overflow-hidden">
+          <p className="text-xs font-black text-white truncate uppercase tracking-tighter">
+            {item.animeTitleUa || item.animeTitle}
+          </p>
+          <p className="text-[8px] text-gray-500 font-bold uppercase tracking-tight">Натисніть для перегляду</p>
+        </div>
+        <div className="shrink-0 w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center border border-purple-500/20 group-hover:scale-110 transition-transform">
+          <span className="text-xs">👁️</span>
+        </div>
+      </div>
+    </div>
+  )) : (
+    <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-30 mt-10">
+      <span className="text-4xl mb-2">⏳</span>
+      <p className="text-[10px] font-black uppercase tracking-widest text-center">Історія порожня</p>
+    </div>
+  )}
+</div>
               )}
             </div>
           </div>
