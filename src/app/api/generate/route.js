@@ -2,18 +2,29 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { db } from "@/lib/firebase"; 
 import { doc, getDoc, setDoc, updateDoc, increment, collection, addDoc, serverTimestamp } from "firebase/firestore";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// 1. Отримуємо рядок з ключами (підтримуємо і старий варіант з одним ключем для сумісності)
+const keysString = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "";
 
-// Використовуємо існуючі ID моделей згідно з твоїми квотами
+// 2. Розбиваємо рядок на масив по комі і забираємо зайві пробіли
+const API_KEYS = keysString.split(',').map(key => key.trim()).filter(key => key.length > 0);
+
 const MODELS_PRIORITY = [
-  "gemini-2.0-flash-lite", // Unlimited RPD — пріоритет №1
-  "gemini-2.0-flash",                    // Високі ліміти RPM
-                   // Стабільний бекап
-  "gemini-2.5-flash-lite"        // Дуже обмежена квота (2 запити/день)
+  "gemini-2.0-flash-lite", 
+  "gemini-2.0-flash",                          
+  "gemini-2.5-flash-lite"        
 ];
 
 export async function POST(req) {
   try {
+    const randomKey = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
+    
+    if (!randomKey) {
+      throw new Error("API ключі не налаштовані на сервері!");
+    }
+
+    // 4. Ініціалізуємо ШІ саме з цим випадковим ключем
+    const genAI = new GoogleGenerativeAI(randomKey);
+    console.log(`🔑 Використовується ключ: ...${randomKey.slice(-6)}`); // Логуємо останні 6 символів ключа для перевірки
     const { mood, viewedAnime, userId } = await req.json();
     
     // Перевірка userId (ігноруємо рядок "null")
