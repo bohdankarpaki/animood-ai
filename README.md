@@ -4,7 +4,7 @@
 
 Проєкт розроблено в рамках індивідуального завдання з дисципліни «Вебпрограмування» (Національний університет «Львівська політехніка»).
 
-🔗 **[Live Demo (Vercel) -> встав своє посилання тут]**
+🔗 **[Live Demo (Vercel) -> https://animood-ai.vercel.app/]**
 
 ---
 
@@ -37,5 +37,5 @@
 
 ### 1. Клонування репозиторію
 ```bash
-git clone [https://github.com/bohdankarpaki/animood-ai.git]
+git clone [https://github.com/bohdankarpaki/animood-ai.git](https://github.com/bohdankarpaki/animood-ai.git)
 cd animood-ai
