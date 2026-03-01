@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { auth, googleProvider, db } from "@/lib/firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
-import { collection, addDoc, query, where, getDocs, orderBy, deleteDoc, doc, onSnapshot, getDoc, setDoc, updateDoc, increment } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, orderBy, deleteDoc, doc, onSnapshot, getDoc, setDoc, updateDoc, increment, getCountFromServer } from "firebase/firestore";
 import { Toaster, toast } from "react-hot-toast";
 // ✅ ОНОВЛЕНИЙ ІМПОРТ
 export default function Home() {
@@ -23,8 +23,59 @@ export default function Home() {
   
   // 👑 Твій статус Адміна
   const isAdmin = user?.uid === "RzEsBfPOmsWazI6kevduWjCjv8S2";
-   
-  // ЗАВАНТАЖЕННЯ ІСТОРІЇ
+   // Стан для статистики Дашборду
+  // 👑 СТАН ДЛЯ ДАШБОРДУ АДМІНА
+  const [adminStats, setAdminStats] = useState({ 
+    totalGenerations: 0, 
+    totalUsers: 0,
+    trends: []
+  });
+
+  // 👑 ЗБІР РЕАЛЬНОЇ СТАТИСТИКИ ТА ТРЕНДІВ
+  const fetchAdminStats = async () => {
+    if (!isAdmin) return;
+    try {
+      // 1. Рахуємо кількість унікальних користувачів
+      const usersSnap = await getCountFromServer(collection(db, "usage"));
+      
+      // 2. Витягуємо всю історію для аналізу трендів
+      const historySnap = await getDocs(collection(db, "history"));
+      const totalGens = historySnap.size;
+
+      // Словник для підрахунку категорій
+      let categories = { "Екшн": 0, "Комедія": 0, "Драма": 0, "Романтика": 0, "Релакс": 0 };
+
+      // Аналізуємо кожен запит у базі
+      historySnap.forEach((doc) => {
+        const mood = (doc.data().mood || "").toLowerCase();
+        if (mood.includes('екшн') || mood.includes('бойовик') || mood.includes('драйв') || mood.includes('епіч')) categories["Екшн"]++;
+        else if (mood.includes('весел') || mood.includes('комед') || mood.includes('сміх')) categories["Комедія"]++;
+        else if (mood.includes('сум') || mood.includes('драм') || mood.includes('плач')) categories["Драма"]++;
+        else if (mood.includes('романт') || mood.includes('кохан') || mood.includes('любов')) categories["Романтика"]++;
+        else if (mood.includes('спокій') || mood.includes('чіл') || mood.includes('релакс')) categories["Релакс"]++;
+      });
+
+      // Перетворюємо в масив і рахуємо відсотки
+      let trendsArray = [];
+      if (totalGens > 0) {
+        for (const [name, count] of Object.entries(categories)) {
+          if (count > 0) {
+            trendsArray.push({ name, percentage: Math.round((count / totalGens) * 100) });
+          }
+        }
+        // Сортуємо від найпопулярнішого до найменшого
+        trendsArray.sort((a, b) => b.percentage - a.percentage);
+      }
+
+      setAdminStats({
+        totalUsers: usersSnap.data().count,
+        totalGenerations: totalGens,
+        trends: trendsArray.slice(0, 4) // Беремо топ-4 тренди
+      });
+    } catch (error) {
+      console.error("Помилка завантаження статистики:", error);
+    }
+  };
   // ЗАВАНТАЖЕННЯ ІСТОРІЇ
   const fetchHistory = async (uid) => {
     // Беремо uid, який передали, АБО той, що вже є в авторизованого юзера
@@ -516,10 +567,10 @@ export default function Home() {
               >
                 Історія ({history.length})
               </button>
-              {/* Секретна вкладка Адміна */}
+             {/* Секретна вкладка Адміна */}
               {isAdmin && (
                 <button 
-                  onClick={() => setActiveTab("admin")}
+                  onClick={() => { setActiveTab("admin"); fetchAdminStats(); }} // 👈 ОНОВЛЕНО
                   className={`flex-1 min-w-max px-4 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all flex items-center justify-center gap-2 ${
                     activeTab === "admin" ? 'text-amber-400 border-b-2 border-amber-400 bg-amber-500/5' : 'text-gray-500 hover:text-amber-200'
                   }`}
@@ -532,19 +583,19 @@ export default function Home() {
             <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
               {/* КОНТЕНТ ВКЛАДОК */}
               {activeTab === "admin" && isAdmin ? (
-                /* 👑 КОНТЕНТ ДАШБОРДУ АДМІНА */
+               /* 👑 ДИНАМІЧНИЙ КОНТЕНТ ДАШБОРДУ АДМІНА */
                 <div className="flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-500">
                   <h3 className="text-amber-400 font-black uppercase tracking-widest text-xs mb-1">Глобальна статистика</h3>
                   
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-gradient-to-br from-amber-950/40 to-black/60 border border-amber-500/20 p-4 rounded-2xl flex flex-col items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.1)]">
                       <span className="text-2xl mb-2 drop-shadow-[0_0_10px_rgba(245,158,11,0.8)]">🔥</span>
-                      <span className="text-3xl font-black text-white">428</span>
+                      <span className="text-3xl font-black text-white">{adminStats.totalGenerations}</span>
                       <span className="text-[8px] text-gray-400 uppercase tracking-widest text-center mt-1">Тотал генерацій</span>
                     </div>
                     <div className="bg-gradient-to-br from-purple-950/40 to-black/60 border border-purple-500/20 p-4 rounded-2xl flex flex-col items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.1)]">
                       <span className="text-2xl mb-2 drop-shadow-[0_0_10px_rgba(168,85,247,0.8)]">👥</span>
-                      <span className="text-3xl font-black text-white">56</span>
+                      <span className="text-3xl font-black text-white">{adminStats.totalUsers}</span>
                       <span className="text-[8px] text-gray-400 uppercase tracking-widest text-center mt-1">Унікальних юзерів</span>
                     </div>
                   </div>
@@ -552,10 +603,15 @@ export default function Home() {
                   <div className="bg-black/40 border border-white/5 p-5 rounded-2xl mt-2 backdrop-blur-sm">
                     <span className="text-[10px] text-gray-400 uppercase tracking-widest mb-4 block">Тренди запитів (Топ):</span>
                     <div className="flex flex-wrap gap-2">
-                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Епічний (34%)</span>
-                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Романтика (28%)</span>
-                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Сумний (15%)</span>
-                      <span className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">Комедія (12%)</span>
+                      {adminStats.trends.length > 0 ? (
+                        adminStats.trends.map((trend, index) => (
+                          <span key={index} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-bold shadow-sm">
+                            {trend.name} ({trend.percentage}%)
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-gray-500 italic">Збираємо дані для аналітики...</span>
+                      )}
                     </div>
                   </div>
                 </div>
