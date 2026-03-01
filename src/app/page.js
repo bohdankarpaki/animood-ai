@@ -3,13 +3,14 @@
 import { useState, useEffect } from "react";
 import { auth, googleProvider, db } from "@/lib/firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
-import { collection, addDoc, query, where, getDocs, orderBy, deleteDoc, doc } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, orderBy, deleteDoc, doc, onSnapshot, getDoc, setDoc, updateDoc, increment } from "firebase/firestore";
 import { Toaster, toast } from "react-hot-toast";
-
+// ✅ ОНОВЛЕНИЙ ІМПОРТ
 export default function Home() {
   const [mood, setMood] = useState("");
   const [result, setResult] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
   const [animeDetails, setAnimeDetails] = useState(null);
   const [user, setUser] = useState(null);
   const [favorites, setFavorites] = useState([]);
@@ -22,25 +23,16 @@ export default function Home() {
   
   // 👑 Твій статус Адміна
   const isAdmin = user?.uid === "RzEsBfPOmsWazI6kevduWjCjv8S2";
- 
-  // ОНОВЛЕННЯ ЛІМІТІВ
-  const refreshUsage = async () => {
-    try {
-      const res = await fetch(`/api/usage?userId=${user?.uid || null}`);
-      if (res.ok) {
-        const data = await res.json();
-        setUsage(data);
-      }
-    } catch (err) {
-      console.error("Помилка завантаження лімітів", err);
-    }
-  };
-
+   
   // ЗАВАНТАЖЕННЯ ІСТОРІЇ
-  const fetchHistory = async () => {
-    if (!user) return;
+  // ЗАВАНТАЖЕННЯ ІСТОРІЇ
+  const fetchHistory = async (uid) => {
+    // Беремо uid, який передали, АБО той, що вже є в авторизованого юзера
+    const targetUid = uid || user?.uid; 
+    if (!targetUid) return;
+    
     try {
-      const res = await fetch(`/api/history?userId=${user.uid}`);
+      const res = await fetch(`/api/history?userId=${targetUid}`);
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
@@ -49,21 +41,110 @@ export default function Home() {
       console.error("Помилка завантаження історії", err);
     }
   };
-
-  // ПІДПИСКА НА СТАН КОРИСТУВАЧА
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        fetchFavorites(currentUser.uid);
-        fetchHistory();
-      }
-      refreshUsage();
+// 📩 ВІДПРАВКА ЗАПИТУ НА ПОШТУ АДМІНА
+  const handleRequestLimit = async () => {
+    if (!user) return toast.error("Спочатку увійди в акаунт!");
+    setIsPaying(true); // Використовуємо існуючий стейт для блокування кнопки
+    
+    const requestPromise = fetch('/api/request-limit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userEmail: user.email,
+        userName: user.displayName || "Користувач",
+        userId: user.uid
+      })
+    }).then(async (res) => {
+      if (!res.ok) throw new Error('Помилка сервера');
+      return res.json();
     });
-    return () => unsubscribe();
-  }, [user]);
 
-  const handleLogin = async () => {
+    toast.promise(requestPromise, {
+      loading: 'Відправляємо голуба до Адміна... 🕊️',
+      success: 'Запит надіслано! Очікуй схвалення 👑',
+      error: 'Не вдалося надіслати запит ❌',
+    }, { style: { background: '#2e0b4b', color: '#fff', border: '1px solid #a855f7' } });
+
+    try {
+      await requestPromise;
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsPaying(false);
+    }
+  };
+ // 🔐 1. СЛУХАЧ АВТОРИЗАЦІЇ ТА ЛІМІТІВ (Real-time)
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        fetchFavorites(currentUser.uid);
+        fetchHistory(currentUser.uid);
+        // 🛠 ПОШУК АБО СТВОРЕННЯ ПРОФІЛЮ ЛІМІТІВ
+        const userRef = doc(db, "usage", currentUser.uid);
+        const docSnap = await getDoc(userRef);
+
+        if (!docSnap.exists()) {
+          // Якщо це новий користувач — даємо йому 15 лімітів
+          await setDoc(userRef, {
+            count: 0,
+            limit: 15,
+            limitRequestStatus: 'none',
+            lastRequestTime: null
+          });
+        }
+
+        // 🔥 ЖИВИЙ СЛУХАЧ (onSnapshot)
+        const unsubscribeUsage = onSnapshot(userRef, (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            // ЗАПОБІЖНИК: якщо поля немає, ставимо дефолтні значення
+            setUsage({
+              count: data.count || 0,
+              limit: data.limit || 15, 
+              limitRequestStatus: data.limitRequestStatus || 'none',
+              lastRequestTime: data.lastRequestTime || null
+            });
+          }
+        });
+
+        return () => unsubscribeUsage();
+      } else {
+        setUser(null);
+        setUsage({ count: 0, limit: 3, limitRequestStatus: 'none' }); // Гість
+        setHistory([]);
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+// 🔔 2. СЛУХАЧ СТАТУСУ ЗАПИТІВ (Для Toast-сповіщень)
+  useEffect(() => {
+    // Якщо статусу немає або він "none", нічого не робимо
+    if (!usage || !usage.limitRequestStatus || usage.limitRequestStatus === 'none') return;
+
+    const notifyAndReset = async () => {
+      // 1. Показуємо повідомлення
+      if (usage.limitRequestStatus === 'rejected') {
+        toast.error("Адміністратор відхилив ваш запит на ліміти ❌", { duration: 5000 });
+      } else if (usage.limitRequestStatus === 'approved') {
+        toast.success("Ваш запит схвалено! Ліміти збільшено 🎉", { duration: 5000 });
+      }
+
+      // 2. Одразу очищаємо статус у базі, щоб повідомлення не дублювалося при F5
+      if (user?.uid) {
+        try {
+          const userRef = doc(db, "usage", user.uid);
+          await updateDoc(userRef, { limitRequestStatus: 'none' });
+        } catch (error) {
+          console.error("Помилка очищення статусу:", error);
+        }
+      }
+    };
+
+    notifyAndReset();
+  }, [usage?.limitRequestStatus, usage?.lastRequestTime, user?.uid]); const handleLogin = async () => {
     try { 
       await signInWithPopup(auth, googleProvider); 
       toast.success("Вхід успішний! ✨");
@@ -151,7 +232,7 @@ export default function Home() {
       if (titleEng) {
         setViewedAnime(prev => [...prev, titleEng].slice(-5));
         await fetchAnimeCover(titleEng, titleUa);
-        refreshUsage();
+        
         fetchHistory();
       }
     } catch (error) { 
@@ -300,23 +381,41 @@ export default function Home() {
           <div className="relative bg-[#0f172a]/60 backdrop-blur-xl border border-white/10 rounded-3xl p-2 shadow-lg shrink-0 overflow-hidden">
             
             {/* ЛІЧИЛЬНИК ЗАПИТІВ */}
-            <div className="px-4 pt-3 pb-1">
-              <div className="flex justify-between items-center mb-1.5">
-                <span className="text-[10px] font-black uppercase tracking-[0.15em] text-gray-400 flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${isAdmin ? 'bg-amber-400 animate-pulse' : (usage.count >= usage.limit ? 'bg-red-500 animate-pulse' : 'bg-purple-500')}`}></span>
-                  Запити на сьогодні
-                </span>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${isAdmin ? 'text-amber-400 bg-amber-500/10 border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'text-white bg-white/10 border-white/5'}`}>
-                  {isAdmin ? '♾️ БЕЗЛІМІТ' : `${usage.count} / ${usage.limit}`}
-                </span>
-              </div>
-              <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                <div 
-                  className={`h-full transition-all duration-1000 ease-out ${isAdmin ? 'bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : (usage.count >= usage.limit ? 'bg-red-500 shadow-[0_0_8px_#ef4444]' : 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-[0_0_8px_#a855f7]')}`}
-                  style={{ width: isAdmin ? '100%' : `${Math.min((usage.count / usage.limit) * 100, 100)}%` }}
-                ></div>
-              </div>
-            </div>
+<div className="px-4 pt-3 pb-1">
+  <div className="flex justify-between items-center mb-1.5">
+    <span className="text-[10px] font-black uppercase tracking-[0.15em] text-gray-400 flex items-center gap-1.5">
+      {/* Пульсуюча крапка статусу */}
+      <span className={`w-1.5 h-1.5 rounded-full ${isAdmin ? 'bg-amber-400 animate-pulse' : (usage.count >= usage.limit ? 'bg-red-500 animate-pulse' : 'bg-purple-500')}`}></span>
+      Запити на сьогодні
+    </span>
+    
+    <div className="flex items-center gap-2">
+      {/* 📩 Кнопка запиту лімітів (тільки для звичайних користувачів) */}
+      {user && !isAdmin && (
+        <button 
+          onClick={handleRequestLimit}
+          disabled={isPaying}
+          className="text-[9px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 px-2 py-0.5 rounded-md transition-all flex items-center gap-1 active:scale-95 disabled:opacity-50"
+        >
+          {isPaying ? '⏳ ВІДПРАВКА...' : '📩 ЗАПРОСИТИ ЛІМІТ'}
+        </button>
+      )}
+
+     {/* Значення лічильника або напис про безліміт для адміна */}
+      <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${isAdmin ? 'text-amber-400 bg-amber-500/10 border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'text-white bg-white/10 border-white/5'}`}>
+        {isAdmin ? '♾️ БЕЗЛІМІТ' : `${usage?.count || 0} / ${usage?.limit || 15}`}
+      </span>
+    </div>
+  </div>
+
+  {/* Смужка прогресу лімітів */}
+  <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
+    <div 
+      className={`h-full transition-all duration-1000 ease-out ${isAdmin ? 'bg-gradient-to-r from-amber-400 via-yellow-500 to-orange-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : ((usage?.count || 0) >= (usage?.limit || 15) ? 'bg-red-500 shadow-[0_0_8px_#ef4444]' : 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-[0_0_8px_#a855f7]')}`}
+      style={{ width: isAdmin ? '100%' : `${Math.min(((usage?.count || 0) / (usage?.limit || 15)) * 100, 100)}%` }}
+    ></div>
+  </div>
+</div>
 
             <textarea
               className="w-full bg-transparent p-4 outline-none text-base resize-none placeholder:text-gray-500 text-gray-100 mt-1"
@@ -326,12 +425,23 @@ export default function Home() {
               onChange={(e) => setMood(e.target.value)}
               onKeyDown={handleKeyDown}
             />
+           {/* ОНОВЛЕНА КНОПКА ГЕНЕРАЦІЇ */}
             <button 
               onClick={generateAnime} 
-              disabled={isLoading}
-              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 py-3 rounded-2xl font-bold text-sm tracking-wide uppercase shadow-[0_0_15px_rgba(168,85,247,0.3)] active:scale-[0.98] transition-all disabled:opacity-50"
+              // Кнопка неактивна, якщо йде завантаження АБО (якщо це не адмін І ліміт вичерпано)
+              disabled={isLoading || (!isAdmin && (usage?.count || 0) >= (usage?.limit || 15))}
+              className={`w-full py-3 rounded-2xl font-bold text-sm tracking-wide uppercase transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-80 
+                ${(!isAdmin && (usage?.count || 0) >= (usage?.limit || 15)) 
+                  ? 'bg-gray-800 text-gray-500 border border-gray-700 shadow-none' // Стиль для вичерпаного ліміту
+                  : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.3)]' // Звичайний стиль
+                }
+              `}
             >
-              {isLoading ? "🔮 СПРИЙНЯТТЯ СВІТІВ..." : "ЗНАЙТИ АНІМЕ ✨"}
+              {isLoading 
+                ? "🔮 СПРИЙНЯТТЯ СВІТІВ..." 
+                : (!isAdmin && (usage?.count || 0) >= (usage?.limit || 15)) 
+                  ? "🛑 ЛІМІТ ВИЧЕРПАНО" 
+                  : "ЗНАЙТИ АНІМЕ ✨"}
             </button>
           </div>
 

@@ -2,74 +2,80 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { db } from "@/lib/firebase"; 
 import { doc, getDoc, setDoc, updateDoc, increment, collection, addDoc, serverTimestamp } from "firebase/firestore";
 
-// 1. Отримуємо рядок з ключами (підтримуємо і старий варіант з одним ключем для сумісності)
+// Отримуємо рядок з ключами
 const keysString = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "";
-
-// 2. Розбиваємо рядок на масив по комі і забираємо зайві пробіли
 const API_KEYS = keysString.split(',').map(key => key.trim()).filter(key => key.length > 0);
 
 const MODELS_PRIORITY = [
-  // 🟢 1 ешелон: Безлімітні "робочі конячки" (Швидкі та безлімітні на день)
-  "gemini-2.5-flash-lite", // 27 RPM / Unlimited RPD
-  "gemini-2.0-flash-lite", // 0 RPM / Unlimited RPD 
-  "gemini-2.0-flash",      // 0 RPM / Unlimited RPD
-
-  // 🟡 2 ешелон: Супер-розумні моделі з величезним лімітом (по 10 000 запитів)
-  "gemini-2.5-flash",      // 22 RPM / 10K RPD
-  "gemini-3.0-flash",      // 0 RPM / 10K RPD (у списку вказана як Gemini 3 Flash)
-
-  // 🔴 3 ешелон: Важка артилерія (Pro-версії, використовуємо тільки як крайній запас)
-  "gemini-2.5-pro",        // 1K RPD
-  "gemini-3.1-pro"         // 250 RPD
+  "gemini-2.5-flash-lite", 
+  "gemini-2.0-flash-lite", 
+  "gemini-2.0-flash",      
+  "gemini-2.5-flash",      
+  "gemini-3.0-flash",      
+  "gemini-2.5-pro",        
+  "gemini-3.1-pro"         
 ];
 
 export async function POST(req) {
   try {
-    const randomKey = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
-    
-    if (!randomKey) {
-      throw new Error("API ключі не налаштовані на сервері!");
-    }
-
-    // 4. Ініціалізуємо ШІ саме з цим випадковим ключем
-    const genAI = new GoogleGenerativeAI(randomKey);
-    console.log(`🔑 Використовується ключ: ...${randomKey.slice(-6)}`); // Логуємо останні 6 символів ключа для перевірки
+    // 1. ОДРАЗУ ЧИТАЄМО ДАНІ ЗАПИТУ (Без ініціалізації ШІ)
     const { mood, viewedAnime, userId } = await req.json();
     
     const validUserId = userId && userId !== "null" ? userId : null;
-    
-    // 👑 ТУТ ВСТАВ СВІЙ СКОПІЙОВАНИЙ UID
     const ADMIN_UID = "RzEsBfPOmsWazI6kevduWjCjv8S2"; 
     
     const ip = req.headers.get("x-forwarded-for")?.split(',')[0] || "anonymous";
     const identifier = validUserId || ip;
-    const limit = validUserId ? 15 : 3;
     
     const today = new Date().toISOString().split('T')[0];
     const usageRef = doc(db, "usage", identifier);
     
-    // 1. ПЕРЕВІРКА ЛІМІТІВ (З урахуванням адміна)
+    // 2. ПЕРЕВІРКА ЛІМІТІВ
     const usageSnap = await getDoc(usageRef);
-    
-    // Якщо поточний юзер - це ти (Адмін), ми просто ігноруємо блок з помилкою 403
+    let currentLimit = validUserId ? 15 : 3; 
+    let currentCount = 0;
+
+    if (usageSnap.exists()) {
+      const data = usageSnap.data();
+      if (data.limit) {
+        currentLimit = data.limit; 
+      }
+      if (data.lastDate === today) {
+        currentCount = data.count || 0;
+      }
+    }
+
+    // Якщо ліміт вичерпано — відхиляємо запит ДО вибору ключа
     if (validUserId !== ADMIN_UID) {
-      if (usageSnap.exists() && usageSnap.data().lastDate === today && usageSnap.data().count >= limit) {
+      if (currentCount >= currentLimit) {
         return new Response(JSON.stringify({ 
           error: "LIMIT_REACHED", 
-          message: `Вичерпано ліміт (${limit} зап./день).` 
+          message: `Вичерпано ліміт (${currentLimit} зап./день).` 
         }), { status: 403 });
       }
     } else {
       console.log("👑 Авторизовано Адміністратора. Безліміт активовано!");
     }
 
-    // Підготовка списку для виключення
-    const avoidText = viewedAnime?.length > 0 ? `ЗАБОРОНЕНО пропонувати: ${viewedAnime.join(", ")}.` : "";
+    // ==========================================
+    // 3. ВИБІР КЛЮЧА ТА ІНІЦІАЛІЗАЦІЯ ШІ
+    // (Виконується ТІЛЬКИ якщо ліміт НЕ вичерпано)
+    // ==========================================
+    const randomKey = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
+    
+    if (!randomKey) {
+      throw new Error("API ключі не налаштовані на сервері!");
+    }
 
+    const genAI = new GoogleGenerativeAI(randomKey);
+    console.log(`🔑 Використовується ключ: ...${randomKey.slice(-6)}`); 
+
+    // 4. ПІДГОТОВКА ПРОМПТУ
+    const avoidText = viewedAnime?.length > 0 ? `ЗАБОРОНЕНО пропонувати: ${viewedAnime.join(", ")}.` : "";
     let result = null;
     let usedModel = "";
 
-    // 2. ЦИКЛ ГЕНЕРАЦІЇ З FALLBACK
+    // 5. ЦИКЛ ГЕНЕРАЦІЇ З FALLBACK
     for (const modelName of MODELS_PRIORITY) {
       try {
         console.log(`📡 Запит до моделі: ${modelName}`);
@@ -98,9 +104,10 @@ export async function POST(req) {
 
     if (!result) throw new Error("Усі моделі ШІ зараз перевантажені.");
 
-    // 3. ОНОВЛЕННЯ ЛІЧИЛЬНИКА
+    // 6. ОНОВЛЕННЯ ЛІЧИЛЬНИКА
     await setDoc(usageRef, { count: increment(1), lastDate: today }, { merge: true });
 
+    // 7. СТРІМІНГ ВІДПОВІДІ
     const stream = new ReadableStream({
       async start(controller) {
         let fullText = ""; 
@@ -112,7 +119,7 @@ export async function POST(req) {
             controller.enqueue(new TextEncoder().encode(chunkText));
           }
 
-          // 4. ЗАПИС В ІСТОРІЮ ПІСЛЯ СТРІМУ
+          // 8. ЗАПИС В ІСТОРІЮ
           if (validUserId && fullText.includes("|")) {
             const cleanText = fullText.replace(/\*\*|"/g, "");
             const parts = cleanText.split("|").map(p => p.trim());
