@@ -37,5 +37,5 @@
 
 ### 1. Клонування репозиторію
 ```bash
-git clone [https://github.com/твій-юзернейм/animood-ai.git](https://github.com/твій-юзернейм/animood-ai.git)
+git clone [https://github.com/bohdankarpaki/animood-ai.git]
 cd animood-ai

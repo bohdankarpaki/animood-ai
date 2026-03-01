@@ -109,7 +109,11 @@ export default function Home() {
         setIsLoading(false);
         return;
       }
-
+if (!response.ok) {
+        setResult("ERROR"); // Встановлюємо спеціальний прапорець помилки
+        setIsLoading(false);
+        return;
+      }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
@@ -294,27 +298,46 @@ const selectHistoryItem = (item) => {
           </div>
 
           {/* RESULT CARD */}
+          {/* RESULT CARD */}
           {result && (
-            <div className="bg-white/5 backdrop-blur-lg rounded-[1.5rem] border border-white/10 shadow-xl flex flex-col sm:flex-row overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500 shrink-0">
-              {animeDetails && (
-                <div className="sm:w-2/5 relative bg-black/50 shrink-0">
-                  <img src={animeDetails.image} className="w-full h-48 sm:h-full object-cover opacity-90" alt="Cover" />
-                  <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-1 rounded-lg">⭐ {animeDetails.score}</div>
-                </div>
-              )}
-              <div className="p-4 sm:p-6 flex-1 flex flex-col">
-                <h3 className="text-xl font-black text-white mb-2 leading-tight">{animeDetails?.titleUa || animeDetails?.title || "Шукаємо..."}</h3>
-                <p className="text-gray-300 text-sm font-medium leading-relaxed mb-4 italic">"{displayDescription}"</p>
-                <div className="flex gap-2 mt-auto">
-                  {user && animeDetails && (
-                    <button onClick={saveToFavorites} className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 px-2 py-2.5 rounded-xl text-xs font-bold transition-all">🤍 Зберегти</button>
-                  )}
-                  {animeDetails?.title && (
-                    <a href={`https://anitube.in.ua/index.php?do=search&subaction=search&story=${encodeURIComponent(animeDetails.title)}`} target="_blank" className="flex-1 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 px-2 py-2.5 rounded-xl text-xs font-black transition-all text-center flex justify-center items-center shadow-[0_0_15px_rgba(239,68,68,0.3)] uppercase tracking-wider">▶ Дивитись</a>
-                  )}
+            result === "ERROR" ? (
+              // 🔴 КРАСИВЕ ВІКНО ПОМИЛКИ
+              <div className="bg-red-950/40 backdrop-blur-lg rounded-[1.5rem] border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.2)] p-6 sm:p-8 flex flex-col items-center justify-center text-center animate-in fade-in zoom-in duration-500 shrink-0">
+                <span className="text-6xl mb-4 drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]">🔌</span>
+                <h3 className="text-xl font-black text-white mb-2 uppercase tracking-wide">ШІ-сомельє перевантажені</h3>
+                <p className="text-red-200/80 text-sm font-medium mb-6 max-w-xs leading-relaxed">
+                  Зараз занадто багато запитів до серверів Gemini. Наші моделі тимчасово медитують. Дай їм хвилинку!
+                </p>
+                <button 
+                  onClick={generateAnime}
+                  className="bg-red-500/20 hover:bg-red-500/40 border border-red-500/50 text-red-100 px-8 py-3 rounded-2xl text-xs font-black transition-all uppercase tracking-widest shadow-[0_0_15px_rgba(239,68,68,0.3)] active:scale-95"
+                >
+                  🔄 Спробувати ще раз
+                </button>
+              </div>
+            ) : (
+              // 🟢 ЗВИЧАЙНА КАРТКА РЕЗУЛЬТАТУ
+              <div className="bg-white/5 backdrop-blur-lg rounded-[1.5rem] border border-white/10 shadow-xl flex flex-col sm:flex-row overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500 shrink-0">
+                {animeDetails && animeDetails.image && (
+                  <div className="sm:w-2/5 relative bg-black/50 shrink-0">
+                    <img src={animeDetails.image} className="w-full h-48 sm:h-full object-cover opacity-90" alt="Cover" />
+                    <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-yellow-400 text-[10px] font-black px-2 py-1 rounded-lg">⭐ {animeDetails.score}</div>
+                  </div>
+                )}
+                <div className="p-4 sm:p-6 flex-1 flex flex-col">
+                  <h3 className="text-xl font-black text-white mb-2 leading-tight">{animeDetails?.titleUa || animeDetails?.title || "Шукаємо..."}</h3>
+                  <p className="text-gray-300 text-sm font-medium leading-relaxed mb-4 italic">"{displayDescription}"</p>
+                  <div className="flex gap-2 mt-auto">
+                    {user && animeDetails?.title && (
+                      <button onClick={saveToFavorites} className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 px-2 py-2.5 rounded-xl text-xs font-bold transition-all">🤍 Зберегти</button>
+                    )}
+                    {animeDetails?.title && (
+                      <a href={`https://anitube.in.ua/index.php?do=search&subaction=search&story=${encodeURIComponent(animeDetails.title)}`} target="_blank" className="flex-1 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 px-2 py-2.5 rounded-xl text-xs font-black transition-all text-center flex justify-center items-center shadow-[0_0_15px_rgba(239,68,68,0.3)] uppercase tracking-wider">▶ Дивитись</a>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )
           )}
 
           {!user && !isLoading && !result && (

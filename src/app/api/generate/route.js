@@ -9,9 +9,18 @@ const keysString = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 
 const API_KEYS = keysString.split(',').map(key => key.trim()).filter(key => key.length > 0);
 
 const MODELS_PRIORITY = [
-  "gemini-2.0-flash-lite", 
-  "gemini-2.0-flash",                          
-  "gemini-2.5-flash-lite"        
+  // 🟢 1 ешелон: Безлімітні "робочі конячки" (Швидкі та безлімітні на день)
+  "gemini-2.5-flash-lite", // 27 RPM / Unlimited RPD
+  "gemini-2.0-flash-lite", // 0 RPM / Unlimited RPD 
+  "gemini-2.0-flash",      // 0 RPM / Unlimited RPD
+
+  // 🟡 2 ешелон: Супер-розумні моделі з величезним лімітом (по 10 000 запитів)
+  "gemini-2.5-flash",      // 22 RPM / 10K RPD
+  "gemini-3.0-flash",      // 0 RPM / 10K RPD (у списку вказана як Gemini 3 Flash)
+
+  // 🔴 3 ешелон: Важка артилерія (Pro-версії, використовуємо тільки як крайній запас)
+  "gemini-2.5-pro",        // 1K RPD
+  "gemini-3.1-pro"         // 250 RPD
 ];
 
 export async function POST(req) {
