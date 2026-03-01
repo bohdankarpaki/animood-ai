@@ -36,8 +36,10 @@ export async function POST(req) {
     console.log(`🔑 Використовується ключ: ...${randomKey.slice(-6)}`); // Логуємо останні 6 символів ключа для перевірки
     const { mood, viewedAnime, userId } = await req.json();
     
-    // Перевірка userId (ігноруємо рядок "null")
     const validUserId = userId && userId !== "null" ? userId : null;
+    
+    // 👑 ТУТ ВСТАВ СВІЙ СКОПІЙОВАНИЙ UID
+    const ADMIN_UID = "RzEsBfPOmsWazI6kevduWjCjv8S2"; 
     
     const ip = req.headers.get("x-forwarded-for")?.split(',')[0] || "anonymous";
     const identifier = validUserId || ip;
@@ -46,13 +48,19 @@ export async function POST(req) {
     const today = new Date().toISOString().split('T')[0];
     const usageRef = doc(db, "usage", identifier);
     
-    // 1. ПЕРЕВІРКА ЛІМІТІВ
+    // 1. ПЕРЕВІРКА ЛІМІТІВ (З урахуванням адміна)
     const usageSnap = await getDoc(usageRef);
-    if (usageSnap.exists() && usageSnap.data().lastDate === today && usageSnap.data().count >= limit) {
-      return new Response(JSON.stringify({ 
-        error: "LIMIT_REACHED", 
-        message: `Вичерпано ліміт (${limit} зап./день).` 
-      }), { status: 403 });
+    
+    // Якщо поточний юзер - це ти (Адмін), ми просто ігноруємо блок з помилкою 403
+    if (validUserId !== ADMIN_UID) {
+      if (usageSnap.exists() && usageSnap.data().lastDate === today && usageSnap.data().count >= limit) {
+        return new Response(JSON.stringify({ 
+          error: "LIMIT_REACHED", 
+          message: `Вичерпано ліміт (${limit} зап./день).` 
+        }), { status: 403 });
+      }
+    } else {
+      console.log("👑 Авторизовано Адміністратора. Безліміт активовано!");
     }
 
     // Підготовка списку для виключення
